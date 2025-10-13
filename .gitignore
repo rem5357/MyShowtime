@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+obj/
+
+# Publish artifacts
+/tmp/
+/var/
+*.Publish.xml
+
+# IDE
+.vscode/
+.vs/
+*.user
+*.suo
+
+# Logs / temp
+*.log
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
