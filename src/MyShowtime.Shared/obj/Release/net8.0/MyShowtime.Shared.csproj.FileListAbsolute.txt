@@ -1,0 +1,11 @@
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/bin/Release/net8.0/MyShowtime.Shared.deps.json
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/bin/Release/net8.0/MyShowtime.Shared.dll
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/bin/Release/net8.0/MyShowtime.Shared.pdb
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/MyShowtime.Shared.GeneratedMSBuildEditorConfig.editorconfig
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/MyShowtime.Shared.AssemblyInfoInputs.cache
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/MyShowtime.Shared.AssemblyInfo.cs
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/MyShowtime.Shared.csproj.CoreCompileInputs.cache
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/MyShowtime.Shared.dll
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/refint/MyShowtime.Shared.dll
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/MyShowtime.Shared.pdb
+/home/mithroll/Projects/MyShowtime/src/MyShowtime.Shared/obj/Release/net8.0/ref/MyShowtime.Shared.dll

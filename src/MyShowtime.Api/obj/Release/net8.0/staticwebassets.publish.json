@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "ojm71UpBUSbMb4xkx8wpPozi1rGtXHDgkVkLH1ZRX24=",
+  "Source": "MyShowtime.Api",
+  "BasePath": "_content/MyShowtime.Api",
+  "Mode": "Default",
+  "ManifestType": "Publish",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}

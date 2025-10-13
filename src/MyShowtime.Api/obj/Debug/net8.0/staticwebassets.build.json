@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "B4uiPD3+bDc4fyj9VBWnRRqAd9jpZzZoLntGUfTNTfM=",
+  "Source": "MyShowtime.Api",
+  "BasePath": "_content/MyShowtime.Api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}

@@ -1,0 +1,3 @@
+﻿<Project>
+  <Import Project="../build/MyShowtime.Client.props" />
+</Project>

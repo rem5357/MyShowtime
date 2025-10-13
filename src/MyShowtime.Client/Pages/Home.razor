@@ -1,0 +1,413 @@
+@page "/"
+
+@using MyShowtime.Shared.Dtos
+@using MyShowtime.Shared.Requests
+@inject Services.ShowService ShowService
+
+<PageTitle>MyShowtime</PageTitle>
+
+<div class="dashboard-grid">
+    <section class="panel">
+        <div class="panel-header">
+            <h1 class="panel-title">Discover Titles</h1>
+            <p class="panel-subtitle">Search TMDB and bring new movies or TV shows into your personal library.</p>
+        </div>
+
+        <div class="search-toolbar">
+            <input class="form-control"
+                   placeholder="Start typing to search TMDB (e.g. Dune, The Wire, Star Trek)..."
+                   @bind="searchTerm"
+                   @bind:event="oninput" />
+
+            <button class="btn btn-primary"
+                    @onclick="SearchAsync"
+                    disabled="@isSearching">
+                @(isSearching ? "Searching..." : "Search TMDB")
+            </button>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(searchFeedback))
+        {
+            <div class="inline-feedback">@searchFeedback</div>
+        }
+
+        @if (isSearching)
+        {
+            <div class="loading-overlay">Contacting TMDB...</div>
+        }
+        else if (searchResults?.Count > 0)
+        {
+            <table class="data-grid">
+                <thead>
+                    <tr>
+                        <th scope="col">Title</th>
+                        <th scope="col">Released</th>
+                        <th scope="col">Overview</th>
+                        <th scope="col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var result in searchResults)
+                    {
+                        <tr>
+                            <td class="col-title">
+                                <div>@result.Title</div>
+                                <div class="media-tag">
+                                    <span>@result.MediaType.ToUpperInvariant()</span>
+                                    @if (IsInLibrary(result.TmdbId))
+                                    {
+                                        <span>* In Library</span>
+                                    }
+                                </div>
+                            </td>
+                            <td>
+                                <span class="release-pill">@FormatRelease(result.ReleaseDate)</span>
+                            </td>
+                            <td>
+                                @Truncate(result.Overview)
+                            </td>
+                            <td>
+                                <div class="table-actions">
+                                    <button class="btn btn-outline"
+                                            @onclick="() => SaveShowAsync(result)"
+                                            disabled="@IsSaving(result.TmdbId)">
+                                        @(IsSaving(result.TmdbId) ? "Saving..." : "Add to Library")
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else if (hasSearched)
+        {
+            <div class="empty-state">
+                <strong>No results found.</strong>
+                Try refining your search or double-check the spelling.
+            </div>
+        }
+        else
+        {
+            <div class="empty-state">
+                <strong>Ready to explore?</strong>
+                Search TMDB to begin building your MyShowtime collection.
+            </div>
+        }
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">
+            <h2 class="panel-title">Library Overview</h2>
+            <p class="panel-subtitle">Your curated list of shows and films stays in sync with the desktop experience.</p>
+        </div>
+
+        <div class="library-meta">
+            <span class="status-pill">
+                @($"{(savedShows?.Count ?? 0)} title{(savedShows?.Count == 1 ? string.Empty : "s")}")
+            </span>
+            @if (!string.IsNullOrEmpty(GetLastUpdatedText()))
+            {
+                <span>@GetLastUpdatedText()</span>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(libraryFeedback))
+        {
+            <div class="inline-feedback">@libraryFeedback</div>
+        }
+
+        @if (isLoadingShows)
+        {
+            <div class="loading-overlay">Loading saved titles...</div>
+        }
+        else if (savedShows?.Count > 0)
+        {
+            <table class="data-grid">
+                <thead>
+                    <tr>
+                        <th scope="col">Title</th>
+                        <th scope="col">Released</th>
+                        <th scope="col">Notes &amp; Details</th>
+                        <th scope="col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var show in savedShows)
+                    {
+                        <tr>
+                            <td class="col-title">
+                                <div>@show.Title</div>
+                                <div class="media-tag">@show.MediaType.ToUpperInvariant()</div>
+                            </td>
+                            <td>
+                                <span class="release-pill">@FormatRelease(show.ReleaseDate)</span>
+                                <div class="notes-text">Added @FormatTimestamp(show.CreatedAtUtc)</div>
+                                @if (show.UpdatedAtUtc is not null)
+                                {
+                                    <div class="notes-text">Updated @FormatTimestamp(show.UpdatedAtUtc.Value)</div>
+                                }
+                            </td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(show.Overview))
+                                {
+                                    <div>@Truncate(show.Overview, 220)</div>
+                                }
+                                else
+                                {
+                                    <div class="notes-text">Overview not downloaded yet.</div>
+                                }
+
+                                @if (!string.IsNullOrWhiteSpace(show.Notes))
+                                {
+                                    <div class="notes-text">Notes: @Truncate(show.Notes, 160)</div>
+                                }
+                            </td>
+                            <td>
+                                <div class="table-actions">
+                                    <button class="btn btn-outline"
+                                            @onclick="() => RefreshShowAsync(show)"
+                                            disabled="@(refreshingId == show.Id)">
+                                        @(refreshingId == show.Id ? "Refreshing..." : "Refresh")
+                                    </button>
+                                    <button class="btn btn-danger"
+                                            @onclick="() => DeleteShowAsync(show.Id)"
+                                            disabled="@(deletingId == show.Id)">
+                                        @(deletingId == show.Id ? "Removing..." : "Remove")
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <div class="empty-state">
+                <strong>Your library is empty.</strong>
+                Use the TMDB search panel to start adding shows and films.
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private string searchTerm = string.Empty;
+    private bool isSearching;
+    private bool hasSearched;
+    private bool isLoadingShows;
+    private string? searchFeedback;
+    private string? libraryFeedback;
+    private List<TmdbSearchResultDto>? searchResults;
+    private List<ShowDto>? savedShows;
+    private readonly HashSet<int> savingTmdbIds = new();
+    private Guid? refreshingId;
+    private Guid? deletingId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSavedShowsAsync();
+    }
+
+    private async Task LoadSavedShowsAsync()
+    {
+        try
+        {
+            isLoadingShows = true;
+            savedShows = (await ShowService.GetShowsAsync()).ToList();
+        }
+        catch (Exception ex)
+        {
+            libraryFeedback = $"Failed to load saved shows: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingShows = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            searchFeedback = "Enter at least one character to start searching TMDB.";
+            hasSearched = false;
+            return;
+        }
+
+        searchFeedback = null;
+        isSearching = true;
+        hasSearched = true;
+
+        try
+        {
+            var results = await ShowService.SearchTmdbAsync(searchTerm);
+            searchResults = results.ToList();
+
+            if (searchResults.Count == 0)
+            {
+                searchFeedback = $"No matches found for \"{searchTerm}\".";
+            }
+        }
+        catch (Exception ex)
+        {
+            searchFeedback = $"Unable to contact TMDB right now: {ex.Message}";
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    private async Task SaveShowAsync(TmdbSearchResultDto result)
+    {
+        if (!savingTmdbIds.Add(result.TmdbId))
+        {
+            return;
+        }
+
+        libraryFeedback = null;
+
+        try
+        {
+            var request = new SaveShowRequest
+            {
+                TmdbId = result.TmdbId,
+                Title = result.Title,
+                MediaType = result.MediaType,
+                Overview = result.Overview,
+                PosterPath = result.PosterPath,
+                ReleaseDate = result.ReleaseDate
+            };
+
+            var saved = await ShowService.SaveShowAsync(request);
+            if (saved is not null)
+            {
+                savedShows ??= new();
+                var index = savedShows.FindIndex(s => s.TmdbId == saved.TmdbId);
+                if (index >= 0)
+                {
+                    savedShows[index] = saved;
+                }
+                else
+                {
+                    savedShows.Insert(0, saved);
+                }
+
+                libraryFeedback = $"\"{saved.Title}\" synced into your library.";
+            }
+        }
+        catch (Exception ex)
+        {
+            libraryFeedback = $"Unable to save \"{result.Title}\": {ex.Message}";
+        }
+        finally
+        {
+            savingTmdbIds.Remove(result.TmdbId);
+        }
+    }
+
+    private async Task DeleteShowAsync(Guid id)
+    {
+        deletingId = id;
+        libraryFeedback = null;
+
+        try
+        {
+            await ShowService.DeleteShowAsync(id);
+            if (savedShows is not null)
+            {
+                savedShows.RemoveAll(s => s.Id == id);
+            }
+
+            libraryFeedback = "Title removed from your library.";
+        }
+        catch (Exception ex)
+        {
+            libraryFeedback = $"Unable to remove the selected title: {ex.Message}";
+        }
+        finally
+        {
+            deletingId = null;
+        }
+    }
+
+    private async Task RefreshShowAsync(ShowDto show)
+    {
+        refreshingId = show.Id;
+        libraryFeedback = null;
+
+        try
+        {
+            var updated = await ShowService.RefreshShowAsync(show.TmdbId, show.MediaType);
+            if (updated is not null && savedShows is not null)
+            {
+                var index = savedShows.FindIndex(s => s.Id == updated.Id);
+                if (index >= 0)
+                {
+                    savedShows[index] = updated;
+                }
+
+                libraryFeedback = $"\"{updated.Title}\" refreshed from TMDB.";
+            }
+        }
+        catch (Exception ex)
+        {
+            libraryFeedback = $"Unable to refresh \"{show.Title}\": {ex.Message}";
+        }
+        finally
+        {
+            refreshingId = null;
+        }
+    }
+
+    private bool IsSaving(int tmdbId) => savingTmdbIds.Contains(tmdbId);
+
+    private bool IsInLibrary(int tmdbId) =>
+        savedShows?.Any(s => s.TmdbId == tmdbId) ?? false;
+
+    private static string FormatRelease(string? releaseDate)
+    {
+        if (string.IsNullOrWhiteSpace(releaseDate))
+        {
+            return "Date TBD";
+        }
+
+        return DateOnly.TryParse(releaseDate, out var parsed)
+            ? parsed.ToString("MMM dd, yyyy")
+            : releaseDate;
+    }
+
+    private static string FormatRelease(DateOnly? releaseDate) =>
+        releaseDate?.ToString("MMM dd, yyyy") ?? "Date TBD";
+
+    private static string Truncate(string? value, int maxLength = 160)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "No synopsis available yet.";
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength
+            ? trimmed
+            : $"{trimmed[..Math.Min(trimmed.Length, maxLength)].TrimEnd()}...";
+    }
+
+    private static string FormatTimestamp(DateTime value) =>
+        value.ToLocalTime().ToString("MMM dd, yyyy 'at' h:mm tt");
+
+    private string GetLastUpdatedText()
+    {
+        var latest = savedShows?
+            .Select(s => s.UpdatedAtUtc ?? s.CreatedAtUtc)
+            .OrderByDescending(d => d)
+            .FirstOrDefault();
+
+        return latest is null
+            ? string.Empty
+            : $"Last change {FormatTimestamp(latest.Value)}";
+    }
+}
