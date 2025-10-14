@@ -1,25 +1,34 @@
 # Codex Project Status: MyShowtime
 
 ## Highlights Completed
-- Established a .NET 8 solution with Blazor WebAssembly client, Minimal API backend, and shared DTO library.
-- Implemented PostgreSQL persistence via Entity Framework Core with automated migrations; database `myshowtime` seeded through `InitialCreate`.
-- Added TMDB integration with environment‑driven API key, search endpoint, metadata refresh, and validation/error handling.
-- Built a Blazor client experience that mirrors the original WPF styling: dual-panel dashboard, TMDB search table, library grid, and contextual feedback.
-- Published artifacts to `/var/www/projects/MyShowtime` and configured a `systemd` service (`myshowtime-api`) plus Nginx reverse proxy (`myshowtime.local`) for static hosting and `/api/*` proxying.
+- Replaced the initial placeholder schema with a rich media domain: `Media` and `Episodes` tables, view-state enums, and JSON-backed genre/cast fields managed via EF Core migrations.
+- Implemented TMDB ingestion for movies and multi-season TV shows (details + seasons API), including streaming provider detection and cast aggregation.
+- Delivered Minimal API endpoints covering library listing, detail retrieval, TMDB import/sync, metadata edits (priority/watch state/notes/hide), and per-episode state updates.
+- Rebuilt the Blazor WASM client to mirror the WPF layout: upper-left media grid with watch filters, lower-left TMDB search/import panel, central detail view (poster, notes, priority/watch controls), and right-side episode browser/detail.
+- Added client-side UI scale controls (settings dialog, slider with live preview + persistence) and refreshed the layout header for quicker access to UI tuning.
+- Automated deployment remains in place: API published to `/var/www/projects/MyShowtime/api`, client assets to `/var/www/projects/MyShowtime/wwwroot` (this is the target when running `dotnet publish`), hosted by `systemd` + Nginx proxy at `http://myshowtime.local`.
 
 ## Current State
-- Service is live locally: `myshowtime-api` listens on `http://localhost:5000`, proxied via Nginx at `http://myshowtime.local`.
-- Environment file `/etc/myshowtime/myshowtime.env` holds production settings (TMDB key, PostgreSQL credentials, ASP.NET Core hosting values).
-- PostgreSQL contains the `Shows` table with enforced unique TMDB IDs; timestamps update correctly on refresh/save flows.
-- Blazor UI deployed under `/var/www/projects/MyShowtime/wwwroot` and styled assets served by Nginx.
+- Service is live locally; TMDB imports create full records in PostgreSQL and hydrate episode lists. Library mutations persist through the API and surface immediately in the Blazor UI.
+- Database schema migrations (`InitialCreate`, `CreateMediaSchema`) are applied; `Media` rows are keyed by TMDB id with episode uniqueness enforced per season/episode.
+- Environment configuration (`/etc/myshowtime/myshowtime.env`) now drives TMDB key, PostgreSQL credentials, and ASP.NET Core environment.
+- UI reflects WPF look-and-feel with watch filters, hide toggle, notes editor, priority steppers, and episode watch-state radios backed by live API calls.
 
 ## Outstanding Considerations
-- Client currently surfaces summaries and actions; deeper detail panes (posters, notes editing, episodic grids) remain to reach full parity with the desktop app.
-- Sensitive secrets live in the environment file—rotate as needed and consider vault integration for production.
-- HTTPS is not yet enabled on Nginx; add certificates before exposing beyond the local network.
-- Automated tests (unit/integration) have not been introduced; future work could cover API validation and client interaction tests.
+- Advanced WPF features still pending: person/crew search mode, streaming availability editing, and richer relationship views (networks, memberships).
+- Secrets remain in the environment file; consider rotation or secret-management tooling before external deployment.
+- HTTPS termination is not configured on Nginx; add TLS before exposing beyond localhost.
+- No automated tests yet; regressions could occur without unit/integration coverage or end-to-end UI smoke tests.
+- TMDB requests run sequentially when importing all seasons; heavy usage may require caching, rate limiting, or background jobs.
+- UI font sizing still needs refinement—current slider approach works but the base sizes feel large on 200% scaled desktops; revisit typography tokens or add finer-grained overrides.
 
 ## Suggested Next Steps
-1. Design and implement detail views (poster, notes, watch state) and richer filtering mirroring the WPF workflows.
-2. Introduce caching/throttling for TMDB searches and optional offline indicators.
-3. Add CI-friendly build/test scripts and consider containerizing API + client for deployment consistency.
+1. Port remaining WPF workflows (person search, provider maintenance, advanced filtering) into corresponding API endpoints and Blazor panels.
+2. Introduce persistence for user-defined fields such as custom source labels, application settings, and multi-user support if needed.
+3. Add automated tests plus CI scripting, and consider containerizing API + client for reproducible deployment.
+4. Harden ops: enable HTTPS, rotate credentials, and monitor TMDB call volume (retry/backoff/caching layer).
+
+## Lessons Learned (Today)
+- Publishing straight to `/var/www/projects/MyShowtime/wwwroot` right after `dotnet publish -c Release src/MyShowtime.Client` ensures UI tweaks (like the header rename) land without stale cached bundles.
+- JS interop guards are essential—wrapping `myShowtimeSettings` calls prevented the Blazor app from showing generic “Unhandled error” messages when scripts hadn’t loaded yet.
+- Blazor WASM caching can mask layout changes; after deployment, always do a hard refresh or clear the service-worker cache when validating UI fixes.
