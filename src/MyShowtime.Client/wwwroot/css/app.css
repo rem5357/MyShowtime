@@ -58,7 +58,7 @@ a:hover {
     display: grid;
     gap: 18px;
     padding: 24px;
-    grid-template-columns: 2.6fr 3.2fr 2.4fr;
+    grid-template-columns: 40% 30% 30%;
     grid-template-rows: minmax(320px, 1fr) minmax(260px, 1fr);
 }
 
@@ -236,7 +236,7 @@ textarea.form-control {
 .data-grid {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.56rem;
+    font-size: 0.9rem;
 }
 
 .data-grid thead {
@@ -247,7 +247,8 @@ textarea.form-control {
 
 .data-grid th,
 .data-grid td {
-    padding: 6px 8px;
+    padding: 0 8px;
+    line-height: 1.2rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 

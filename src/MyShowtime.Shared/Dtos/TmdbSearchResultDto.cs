@@ -1,9 +1,12 @@
+using MyShowtime.Shared.Enums;
+
 namespace MyShowtime.Shared.Dtos;
 
 public record TmdbSearchResultDto(
     int TmdbId,
-    string MediaType,
+    MediaType MediaType,
     string Title,
     string? Overview,
     string? PosterPath,
-    string? ReleaseDate);
+    string? ReleaseDate,
+    string? AvailableOn);

@@ -5,6 +5,7 @@
 - Implemented TMDB ingestion for movies and multi-season TV shows (details + seasons API), including streaming provider detection and cast aggregation.
 - Delivered Minimal API endpoints covering library listing, detail retrieval, TMDB import/sync, metadata edits (priority/watch state/notes/hide), and per-episode state updates.
 - Rebuilt the Blazor WASM client to mirror the WPF layout: upper-left media grid with watch filters, lower-left TMDB search/import panel, central detail view (poster, notes, priority/watch controls), and right-side episode browser/detail.
+- Enhanced the TMDB search experience with provider-aware results, inline detail previews in the main panel, and a single “Add to Tracking” action that imports the highlighted result.
 - Simplified the layout header (no settings drawer) while keeping deployment-friendly defaults.
 - Automated deployment remains in place: API published to `/var/www/projects/MyShowtime/api`, client assets to `/var/www/projects/MyShowtime/wwwroot` (this is the target when running `dotnet publish`), hosted by `systemd` + Nginx proxy at `http://myshowtime.local`.
 - Added scoped Tailscale access by serving the client and API at `/MyShowtime/` through an Nginx snippet that rewrites static assets and proxies back to `http://127.0.0.1:5000`.
@@ -16,6 +17,7 @@
 - UI reflects WPF look-and-feel with watch filters, hide toggle, notes editor, priority steppers, and episode watch-state radios backed by live API calls.
 - Blazor dashboard panels are height-capped (library/search at 50vh, details/episodes at viewport height) with internal scrolling, and the client remembers each browser's last-selected media item via `localStorage`.
 - Blazor dashboard now surfaces a zoom-tip banner (reappears after ~18 hours), shows movie posters in the episode column when no episodes exist, and compresses grid rows for denser library browsing.
+- Search panel rows now reflect provider availability (if present) and selecting a result drives a full detail preview in the center panel with an “Add to Tracking” call-to-action.
 - Nginx now responds at `http://100.102.6.85/MyShowtime/` for Tailscale clients while keeping `http://myshowtime.local/` available on the LAN.
 
 ## Outstanding Considerations
@@ -24,6 +26,7 @@
 - HTTPS termination is not configured on Nginx; add TLS before exposing beyond localhost.
 - No automated tests yet; regressions could occur without unit/integration coverage or end-to-end UI smoke tests.
 - TMDB requests run sequentially when importing all seasons; heavy usage may require caching, rate limiting, or background jobs.
+- Search enrichment now performs a per-result watch-provider lookup; evaluate caching or batching if TMDB quota becomes an issue.
 - UI font sizing still needs refinement—consider reintroducing per-user scaling or typographic tokens when the design stabilises.
 
 ## Suggested Next Steps
@@ -31,6 +34,15 @@
 2. Introduce persistence for user-defined fields such as custom source labels, application settings, and multi-user support if needed.
 3. Add automated tests plus CI scripting, and consider containerizing API + client for reproducible deployment.
 4. Harden ops: enable HTTPS, rotate credentials, and monitor TMDB call volume (retry/backoff/caching layer).
+
+## Operational Notes
+- Preferred publish command for the client: `dotnet publish -c Release src/MyShowtime.Client -o /tmp/<guid>` followed by `rsync -a /tmp/<guid>/ /var/www/projects/MyShowtime/wwwroot/`. The publish output nests a `wwwroot` directory—rsync into the target and delete the extra `/wwwroot` folder afterwards.
+- Always redeploy the Blazor client after meaningful UI/API changes; user expects live verification immediately.
+- Paths of interest:
+  - Client assets served from `/var/www/projects/MyShowtime/wwwroot/`.
+  - API binaries deployed to `/var/www/projects/MyShowtime/api/`.
+  - Nginx snippet: `/etc/nginx/snippets/projects/MyShowtime.conf`.
+- After redeploying, perform a hard refresh in the browser (service worker caching can hold stale assets).
 
 ## Lessons Learned (Today)
 - Publishing straight to `/var/www/projects/MyShowtime/wwwroot` right after `dotnet publish -c Release src/MyShowtime.Client` ensures UI tweaks (like the header rename) land without stale cached bundles.
@@ -41,3 +53,6 @@
 - Use lightweight `localStorage` helpers (via `myShowtimeState`) for user-specific state like the last-selected media, keeping it per-browser without introducing server-side user tracking yet.
 - Dense tabular layouts are more readable after shrinking row padding by ~40%; tweak font + padding together to avoid cramped hit targets.
 - Default zoom guidance now relies on a dismissable in-app banner; we store a timestamp so it stays hidden for ~18 hours before reappearing.
+- Rebalancing the dashboard grid to 40/30/30 keeps the library panel dominant while leaving enough room for the preview and episode panes.
+- Search previews feel instant only if we trigger UI refreshes during TMDB calls; use `StateHasChanged` (or `InvokeAsync`) when flipping between library selections and search previews.
+- Watch-provider enrichment adds noticeable latency; keep an eye on TMDB rate limits and consider caching for repeated queries.

@@ -41,7 +41,7 @@
                 <thead>
                     <tr>
                         <th scope="col">Title</th>
-                        <th scope="col">Priority</th>
+                        <th scope="col" class="col-center">Priority</th>
                         <th scope="col">Type</th>
                         <th scope="col">Released</th>
                     </tr>
@@ -80,12 +80,18 @@
         }
         <div class="table-scroll">
             <table class="data-grid">
+                <colgroup>
+                    <col style="width:40%" />
+                    <col style="width:20%" />
+                    <col style="width:20%" />
+                    <col style="width:20%" />
+                </colgroup>
                 <thead>
                     <tr>
                         <th scope="col">Title</th>
                         <th scope="col">Type</th>
                         <th scope="col">Released</th>
-                        <th scope="col">Actions</th>
+                        <th scope="col">Source</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -97,16 +103,12 @@
                     {
                         @foreach (var result in searchResults)
                         {
-                            var isImporting = importingTmdbIds.Contains(result.TmdbId);
-                            <tr>
+                            var isSelected = selectedSearchResult?.TmdbId == result.TmdbId && selectedSearchResult.MediaType == result.MediaType;
+                            <tr class="@BuildSearchRowClasses(result, isSelected)" @onclick="() => SelectSearchResultAsync(result)">
                                 <td>@result.Title</td>
                                 <td>@(result.MediaType == MediaType.Movie ? "Movie" : "TV Show")</td>
                                 <td>@FormatRelease(result.ReleaseDate)</td>
-                                <td>
-                                    <button class="btn btn-outline" disabled="@isImporting" @onclick="() => ImportFromTmdbAsync(result)">
-                                        @(isImporting ? "Importing..." : "Import")
-                                    </button>
-                                </td>
+                                <td>@FormatSource(result.AvailableOn)</td>
                             </tr>
                         }
                     }
@@ -116,20 +118,27 @@
     </section>
 
     <section class="panel panel-details">
-        @if (selectedDetail is null)
+        @{
+            var activeDetail = searchPreviewDetail ?? selectedDetail;
+            var isPreview = searchPreviewDetail is not null;
+        }
+        @if (activeDetail is null)
         {
             <div class="empty-state">
-                <strong>Select a title</strong>
-                Choose a media from the library to view details.
+                <strong>@(isLoadingPreview ? "Loading selection" : "Select a title")</strong>
+                @(isLoadingPreview
+                    ? "Fetching TMDB details..."
+                    : "Choose a media from the library or search results to view details.")
             </div>
         }
         else
         {
+            var detail = activeDetail;
             <div class="detail-header">
                 <div class="poster">
-                    @if (!string.IsNullOrWhiteSpace(selectedDetail.PosterPath))
+                    @if (!string.IsNullOrWhiteSpace(detail.PosterPath))
                     {
-                        <img src="@BuildPosterUrl(selectedDetail.PosterPath)" alt="Poster" />
+                        <img src="@BuildPosterUrl(detail.PosterPath)" alt="Poster" />
                     }
                     else
                     {
@@ -137,26 +146,26 @@
                     }
                 </div>
                 <div class="detail-meta">
-                    <div class="detail-title">@selectedDetail.Title</div>
-                    <div class="detail-subtitle">@(selectedDetail.MediaType == MediaType.Movie ? "Movie" : "TV Show") · @FormatDate(selectedDetail.ReleaseDate)</div>
+                    <div class="detail-title">@detail.Title</div>
+                    <div class="detail-subtitle">@(detail.MediaType == MediaType.Movie ? "Movie" : "TV Show") · @FormatDate(detail.ReleaseDate)</div>
                     <div class="detail-tags">
-                        <span class="status-pill">Priority @updateModel.Priority</span>
-                        <span class="status-pill">@selectedDetail.WatchState</span>
-                        @if (selectedDetail.Hidden)
+                        <span class="status-pill">Priority @(isPreview ? detail.Priority : updateModel.Priority)</span>
+                        <span class="status-pill">@detail.WatchState</span>
+                        @if (!isPreview && detail.Hidden)
                         {
                             <span class="status-pill status-hidden">Hidden</span>
                         }
                     </div>
                     <div class="detail-genres">
-                        <strong>Genres:</strong> @FormatList(selectedDetail.Genres)
+                        <strong>Genres:</strong> @FormatList(detail.Genres)
                     </div>
                     <div class="detail-cast">
-                        <strong>Cast:</strong> @FormatList(selectedDetail.Cast)
+                        <strong>Cast:</strong> @FormatList(detail.Cast)
                     </div>
-                    @if (!string.IsNullOrWhiteSpace(selectedDetail.AvailableOn))
+                    @if (!string.IsNullOrWhiteSpace(detail.AvailableOn))
                     {
                         <div class="detail-availability">
-                            <strong>Available on:</strong> @selectedDetail.AvailableOn
+                            <strong>Available on:</strong> @detail.AvailableOn
                         </div>
                     }
                 </div>
@@ -164,63 +173,89 @@
 
             <div class="detail-body">
                 <div class="detail-actions">
-                    <div class="priority-control">
-                        <span class="label">Priority</span>
-                        <div class="priority-buttons">
-                            <button class="btn btn-outline" @onclick="() => AdjustPriority(-1)" disabled="@isSavingDetail">-</button>
-                            <input class="priority-input" value="@updateModel.Priority" readonly />
-                            <button class="btn btn-outline" @onclick="() => AdjustPriority(1)" disabled="@isSavingDetail">+</button>
+                    @if (isPreview)
+                    {
+                        <div class="button-row">
+                            <button class="btn btn-primary" @onclick="AddPreviewToTrackingAsync" disabled="@(isAddingPreview || isLoadingPreview)">
+                                @(isAddingPreview ? "Adding..." : "Add to Tracking")
+                            </button>
                         </div>
-                    </div>
-                    <div class="watchstate-control">
-                        <span class="label">Watch State</span>
-                        <div class="radio-group">
-                            <label><input type="radio" name="watch-state" value="Unwatched" checked="@IsWatchStateSelected(ViewState.Unwatched)" @onchange="_ => ChangeWatchState(ViewState.Unwatched)" /> Unwatched</label>
-                            <label><input type="radio" name="watch-state" value="Partial" checked="@IsWatchStateSelected(ViewState.Partial)" @onchange="_ => ChangeWatchState(ViewState.Partial)" /> Partial</label>
-                            <label><input type="radio" name="watch-state" value="Watched" checked="@IsWatchStateSelected(ViewState.Watched)" @onchange="_ => ChangeWatchState(ViewState.Watched)" /> Watched</label>
+                    }
+                    else
+                    {
+                        <div class="priority-control">
+                            <span class="label">Priority</span>
+                            <div class="priority-buttons">
+                                <button class="btn btn-outline" @onclick="() => AdjustPriority(-1)" disabled="@isSavingDetail">-</button>
+                                <input class="priority-input" value="@updateModel.Priority" readonly />
+                                <button class="btn btn-outline" @onclick="() => AdjustPriority(1)" disabled="@isSavingDetail">+</button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="toggle-group">
-                        <button class="btn btn-outline" @onclick="ToggleHidden" disabled="@isSavingDetail">@(updateModel.Hidden ? "Unhide" : "Hide")</button>
-                        <button class="btn btn-outline" @onclick="SyncSelectedAsync" disabled="@isSyncing">@(isSyncing ? "Refreshing..." : "Refresh from TMDB")</button>
-                    </div>
+                        <div class="watchstate-control">
+                            <span class="label">Watch State</span>
+                            <div class="radio-group">
+                                <label><input type="radio" name="watch-state" value="Unwatched" checked="@IsWatchStateSelected(ViewState.Unwatched)" @onchange="_ => ChangeWatchState(ViewState.Unwatched)" /> Unwatched</label>
+                                <label><input type="radio" name="watch-state" value="Partial" checked="@IsWatchStateSelected(ViewState.Partial)" @onchange="_ => ChangeWatchState(ViewState.Partial)" /> Partial</label>
+                                <label><input type="radio" name="watch-state" value="Watched" checked="@IsWatchStateSelected(ViewState.Watched)" @onchange="_ => ChangeWatchState(ViewState.Watched)" /> Watched</label>
+                            </div>
+                        </div>
+                        <div class="toggle-group">
+                            <button class="btn btn-outline" @onclick="ToggleHidden" disabled="@isSavingDetail">@(updateModel.Hidden ? "Unhide" : "Hide")</button>
+                            <button class="btn btn-outline" @onclick="SyncSelectedAsync" disabled="@isSyncing">@(isSyncing ? "Refreshing..." : "Refresh from TMDB")</button>
+                        </div>
+                    }
                 </div>
 
                 <div class="detail-summary">
                     <h3>Overview</h3>
-                    <p>@(string.IsNullOrWhiteSpace(selectedDetail.Synopsis) ? "No synopsis available." : selectedDetail.Synopsis)</p>
+                    <p>@(string.IsNullOrWhiteSpace(detail.Synopsis) ? "No synopsis available." : detail.Synopsis)</p>
                 </div>
 
-                <div class="detail-notes">
-                    <label class="label">Notes</label>
-                    <textarea class="form-control" rows="5" @bind="updateModel.Notes"></textarea>
-                    <div class="button-row">
-                        <button class="btn btn-primary" @onclick="SaveDetailChanges" disabled="@isSavingDetail">@(isSavingDetail ? "Saving..." : "Save Changes")</button>
-                    </div>
-                </div>
-                @if (!string.IsNullOrWhiteSpace(detailFeedback))
+                @if (!isPreview)
                 {
-                    <div class="inline-feedback">@detailFeedback</div>
+                    <div class="detail-notes">
+                        <label class="label">Notes</label>
+                        <textarea class="form-control" rows="5" @bind="updateModel.Notes"></textarea>
+                        <div class="button-row">
+                            <button class="btn btn-primary" @onclick="SaveDetailChanges" disabled="@isSavingDetail">@(isSavingDetail ? "Saving..." : "Save Note")</button>
+                        </div>
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(isPreview ? previewFeedback : detailFeedback))
+                {
+                    <div class="inline-feedback">@(isPreview ? previewFeedback : detailFeedback)</div>
                 }
             </div>
         }
     </section>
 
     <section class="panel panel-episodes">
-        @if (selectedDetail is null)
+        @{
+            var episodesDetail = searchPreviewDetail ?? selectedDetail;
+            var previewingSearchResult = searchPreviewDetail is not null;
+        }
+        @if (episodesDetail is null)
         {
             <div class="empty-state">
                 <strong>No episode data</strong>
                 Select a TV show to view episode details.
             </div>
         }
-        else if (selectedDetail.MediaType != MediaType.TvShow)
+        else if (previewingSearchResult)
+        {
+            <div class="empty-state">
+                <strong>Episodes unavailable</strong>
+                Add this title to tracking to view synced episodes.
+            </div>
+        }
+        else if (episodesDetail.MediaType != MediaType.TvShow)
         {
             <div class="episode-empty-poster">
                 <div class="poster">
-                    @if (!string.IsNullOrWhiteSpace(selectedDetail.PosterPath))
+                    @if (!string.IsNullOrWhiteSpace(episodesDetail.PosterPath))
                     {
-                        <img src="@BuildPosterUrl(selectedDetail.PosterPath)" alt="Poster" />
+                        <img src="@BuildPosterUrl(episodesDetail.PosterPath)" alt="Poster" />
                     }
                     else
                     {
@@ -276,7 +311,7 @@
                             <thead>
                                 <tr>
                                     <th scope="col">Title</th>
-                                    <th scope="col">Episode</th>
+                                    <th scope="col" class="col-center">Episode</th>
                                     <th scope="col">Air Date</th>
                                 </tr>
                             </thead>
@@ -305,7 +340,6 @@
     private List<MediaSummaryDto> library = new();
     private List<MediaSummaryDto> filteredLibrary = new();
     private List<TmdbSearchResultDto> searchResults = new();
-    private HashSet<int> importingTmdbIds = new();
     private List<EpisodeDto> episodes = new();
     private List<EpisodeDto> filteredEpisodes = new();
 
@@ -313,6 +347,8 @@
     private bool bannerVisible = true;
     private MediaSummaryDto? selectedSummary;
     private MediaDetailDto? selectedDetail;
+    private TmdbSearchResultDto? selectedSearchResult;
+    private MediaDetailDto? searchPreviewDetail;
     private EpisodeDto? selectedEpisode;
 
     private UpdateMediaRequest updateModel = new()
@@ -324,9 +360,12 @@
     private string? libraryError;
     private string? searchFeedback;
     private string? detailFeedback;
+    private string? previewFeedback;
     private bool isSavingDetail;
     private bool isSyncing;
     private bool isSearching;
+    private bool isLoadingPreview;
+    private bool isAddingPreview;
     private bool filterUnwatched = true;
     private bool filterPartial = true;
     private bool filterWatched = true;
@@ -425,6 +464,11 @@
         episodes.Clear();
         filteredEpisodes.Clear();
         detailFeedback = null;
+        selectedSearchResult = null;
+        searchPreviewDetail = null;
+        previewFeedback = null;
+        isLoadingPreview = false;
+        isAddingPreview = false;
 
         try
         {
@@ -489,6 +533,111 @@
         StateHasChanged();
     }
 
+    private async Task SelectSearchResultAsync(TmdbSearchResultDto result)
+    {
+        if (isLoadingPreview)
+        {
+            return;
+        }
+
+        if (selectedSearchResult?.TmdbId == result.TmdbId && selectedSearchResult.MediaType == result.MediaType && searchPreviewDetail is not null)
+        {
+            return;
+        }
+
+        selectedSearchResult = result;
+        searchPreviewDetail = null;
+        previewFeedback = null;
+        detailFeedback = null;
+        selectedSummary = null;
+        selectedDetail = null;
+        selectedEpisode = null;
+        episodes.Clear();
+        filteredEpisodes.Clear();
+        isLoadingPreview = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var preview = await MediaService.GetTmdbPreviewAsync(result.TmdbId, result.MediaType, CancellationToken.None);
+            if (preview is not null)
+            {
+                searchPreviewDetail = preview;
+            }
+            else
+            {
+                previewFeedback = "Unable to load TMDB preview.";
+            }
+        }
+        catch (Exception ex)
+        {
+            previewFeedback = $"Failed to load TMDB preview: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingPreview = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task AddPreviewToTrackingAsync()
+    {
+        if (selectedSearchResult is null || isAddingPreview)
+        {
+            return;
+        }
+
+        isAddingPreview = true;
+        previewFeedback = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var request = new ImportMediaRequest
+            {
+                TmdbId = selectedSearchResult.TmdbId,
+                MediaType = selectedSearchResult.MediaType,
+                Priority = 3
+            };
+
+            var detail = await MediaService.ImportMediaAsync(request);
+            if (detail is not null)
+            {
+                UpsertSummary(detail);
+                ApplyFilters();
+                searchPreviewDetail = null;
+                selectedSearchResult = null;
+
+                await SelectMediaAsync(new MediaSummaryDto(
+                    detail.Id,
+                    detail.TmdbId,
+                    detail.MediaType,
+                    detail.Title,
+                    detail.ReleaseDate,
+                    detail.Priority,
+                    detail.Source,
+                    detail.WatchState,
+                    detail.Hidden,
+                    detail.CreatedAtUtc,
+                    detail.UpdatedAtUtc,
+                    detail.LastSyncedAtUtc));
+            }
+            else
+            {
+                previewFeedback = "Unable to add media to tracking.";
+            }
+        }
+        catch (Exception ex)
+        {
+            previewFeedback = $"Failed to add to tracking: {ex.Message}";
+        }
+        finally
+        {
+            isAddingPreview = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
     private async Task SearchAsync()
     {
         if (string.IsNullOrWhiteSpace(searchTerm))
@@ -507,6 +656,11 @@
                 .Where(r => r.MediaType is MediaType.Movie or MediaType.TvShow)
                 .Take(25)
                 .ToList();
+            selectedSearchResult = null;
+            searchPreviewDetail = null;
+            previewFeedback = null;
+            isLoadingPreview = false;
+            isAddingPreview = false;
             if (searchResults.Count == 0)
             {
                 searchFeedback = $"No results for '{searchTerm}'.";
@@ -527,52 +681,11 @@
         searchTerm = string.Empty;
         searchResults.Clear();
         searchFeedback = null;
-    }
-
-    private async Task ImportFromTmdbAsync(TmdbSearchResultDto result)
-    {
-        if (!importingTmdbIds.Add(result.TmdbId))
-        {
-            return;
-        }
-
-        try
-        {
-            var request = new ImportMediaRequest
-            {
-                TmdbId = result.TmdbId,
-                MediaType = result.MediaType,
-                Priority = 3
-            };
-
-            var detail = await MediaService.ImportMediaAsync(request);
-            if (detail is not null)
-            {
-                UpsertSummary(detail);
-                ApplyFilters();
-                await SelectMediaAsync(new MediaSummaryDto(
-                    detail.Id,
-                    detail.TmdbId,
-                    detail.MediaType,
-                    detail.Title,
-                    detail.ReleaseDate,
-                    detail.Priority,
-                    detail.Source,
-                    detail.WatchState,
-                    detail.Hidden,
-                    detail.CreatedAtUtc,
-                    detail.UpdatedAtUtc,
-                    detail.LastSyncedAtUtc));
-            }
-        }
-        catch (Exception ex)
-        {
-            searchFeedback = $"Import failed: {ex.Message}";
-        }
-        finally
-        {
-            importingTmdbIds.Remove(result.TmdbId);
-        }
+        selectedSearchResult = null;
+        searchPreviewDetail = null;
+        previewFeedback = null;
+        isLoadingPreview = false;
+        isAddingPreview = false;
     }
 
     private void UpsertSummary(MediaDetailDto detail)
@@ -811,6 +924,7 @@
 
     private static string FormatDate(DateOnly? date) => date?.ToString("MMM dd, yyyy") ?? "Date TBD";
     private static string FormatRelease(string? date) => string.IsNullOrWhiteSpace(date) ? "Date TBD" : date;
+    private static string FormatSource(string? source) => string.IsNullOrWhiteSpace(source) ? "Unknown" : source;
     private static string FormatList(IEnumerable<string> values) => !values.Any() ? "Unknown" : string.Join(", ", values);
 
     private static string FormatEpisodeCode(EpisodeDto episode)
@@ -831,6 +945,16 @@
         {
             classes.Add("row-hidden");
         }
+        if (isSelected)
+        {
+            classes.Add("row-selected");
+        }
+        return string.Join(' ', classes);
+    }
+
+    private string BuildSearchRowClasses(TmdbSearchResultDto result, bool isSelected)
+    {
+        var classes = new List<string> { "state-pill" };
         if (isSelected)
         {
             classes.Add("row-selected");
