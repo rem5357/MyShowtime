@@ -22,35 +22,110 @@ namespace MyShowtime.Api.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("MyShowtime.Api.Entities.Show", b =>
+            modelBuilder.Entity("MyShowtime.Api.Entities.Episode", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<DateOnly?>("AirDate")
+                        .HasColumnType("date");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
+                    b.Property<int>("EpisodeNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsSpecial")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("MediaId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SeasonNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Synopsis")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<int>("TmdbEpisodeId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WatchState")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaId", "SeasonNumber", "EpisodeNumber")
+                        .IsUnique();
+
+                    b.ToTable("Episodes");
+                });
+
+            modelBuilder.Entity("MyShowtime.Api.Entities.Media", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AvailableOn")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Cast")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("Genres")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Hidden")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastSyncedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("MediaType")
                         .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.Property<string>("Notes")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)");
-
-                    b.Property<string>("Overview")
                         .HasColumnType("text");
 
                     b.Property<string>("PosterPath")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
                     b.Property<DateOnly?>("ReleaseDate")
                         .HasColumnType("date");
+
+                    b.Property<string>("Source")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Synopsis")
+                        .HasColumnType("text");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -61,15 +136,35 @@ namespace MyShowtime.Api.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTime?>("UpdatedAtUtc")
-                        .ValueGeneratedOnUpdate()
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WatchState")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("TmdbId")
                         .IsUnique();
 
-                    b.ToTable("Shows");
+                    b.ToTable("Media");
+                });
+
+            modelBuilder.Entity("MyShowtime.Api.Entities.Episode", b =>
+                {
+                    b.HasOne("MyShowtime.Api.Entities.Media", "Media")
+                        .WithMany("Episodes")
+                        .HasForeignKey("MediaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Media");
+                });
+
+            modelBuilder.Entity("MyShowtime.Api.Entities.Media", b =>
+                {
+                    b.Navigation("Episodes");
                 });
 #pragma warning restore 612, 618
         }
