@@ -1,259 +1,520 @@
 @page "/"
 
+@using Microsoft.JSInterop
+@using MyShowtime.Client.Services
 @using MyShowtime.Shared.Dtos
+@using MyShowtime.Shared.Enums
 @using MyShowtime.Shared.Requests
-@inject Services.ShowService ShowService
+@inject MediaLibraryService MediaService
+@inject IJSRuntime JS
 
-<PageTitle>MyShowtime</PageTitle>
+<PageTitle>MyShowtime Library</PageTitle>
 
-<div class="dashboard-grid">
-    <section class="panel">
-        <div class="panel-header">
-            <h1 class="panel-title">Discover Titles</h1>
-            <p class="panel-subtitle">Search TMDB and bring new movies or TV shows into your personal library.</p>
+@if (bannerVisible)
+{
+    <div class="page-banner" role="alert">
+        <span>Use Control-Mouse wheel to adjust browser zoom until data fits smoothly without being too small.</span>
+        <button type="button" class="dismiss-banner" @onclick="DismissBanner" aria-label="Dismiss zoom tip">&times;</button>
+    </div>
+}
+
+<div class="dashboard-layout">
+    <section class="panel panel-library">
+        <header class="panel-header">
+            <div>
+                <h2 class="panel-title">Local Media Library</h2>
+                <p class="panel-subtitle">Browse titles synced from TMDB and manage watch states.</p>
+            </div>
+            <div class="watch-filters">
+                <label><input type="checkbox" @bind="filterUnwatched" @bind:after="ApplyFilters" /> Unwatched</label>
+                <label><input type="checkbox" @bind="filterPartial" @bind:after="ApplyFilters" /> Partial</label>
+                <label><input type="checkbox" @bind="filterWatched" @bind:after="ApplyFilters" /> Watched</label>
+                <label><input type="checkbox" @bind="includeHidden" @bind:after="IncludeHiddenChanged" /> Show hidden</label>
+            </div>
+        </header>
+        @if (libraryError is not null)
+        {
+            <div class="inline-feedback">@libraryError</div>
+        }
+        <div class="table-scroll library-table">
+            <table class="data-grid">
+                <thead>
+                    <tr>
+                        <th scope="col">Title</th>
+                        <th scope="col">Priority</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Released</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in filteredLibrary)
+                    {
+                        var isSelected = selectedSummary?.Id == item.Id;
+                        <tr class="@BuildMediaRowClasses(item, isSelected)" @onclick="() => SelectMediaAsync(item)">
+                            <td>@item.Title</td>
+                            <td class="col-center">@item.Priority</td>
+                            <td>@(item.MediaType == MediaType.Movie ? "Movie" : "TV Show")</td>
+                            <td>@FormatDate(item.ReleaseDate)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
         </div>
+    </section>
 
-        <div class="search-toolbar">
-            <input class="form-control"
-                   placeholder="Start typing to search TMDB (e.g. Dune, The Wire, Star Trek)..."
-                   @bind="searchTerm"
-                   @bind:event="oninput" />
-
-            <button class="btn btn-primary"
-                    @onclick="SearchAsync"
-                    disabled="@isSearching">
-                @(isSearching ? "Searching..." : "Search TMDB")
-            </button>
-        </div>
-
+    <section class="panel panel-search">
+        <header class="panel-header">
+            <div>
+                <h2 class="panel-title">TMDB Media Search</h2>
+                <p class="panel-subtitle">Find new movies or TV shows to import into the library.</p>
+            </div>
+            <div class="search-controls">
+                <input class="form-control" placeholder="Search TMDB..." @bind="searchTerm" @bind:event="oninput" />
+                <button class="btn btn-primary" @onclick="SearchAsync" disabled="@isSearching">@(isSearching ? "Searching..." : "Search")</button>
+                <button class="btn btn-outline" @onclick="ClearSearch" disabled="@isSearching && string.IsNullOrWhiteSpace(searchTerm)">Clear</button>
+            </div>
+        </header>
         @if (!string.IsNullOrWhiteSpace(searchFeedback))
         {
             <div class="inline-feedback">@searchFeedback</div>
         }
-
-        @if (isSearching)
-        {
-            <div class="loading-overlay">Contacting TMDB...</div>
-        }
-        else if (searchResults?.Count > 0)
-        {
+        <div class="table-scroll">
             <table class="data-grid">
                 <thead>
                     <tr>
                         <th scope="col">Title</th>
+                        <th scope="col">Type</th>
                         <th scope="col">Released</th>
-                        <th scope="col">Overview</th>
                         <th scope="col">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var result in searchResults)
+                    @if (searchResults.Count == 0)
                     {
-                        <tr>
-                            <td class="col-title">
-                                <div>@result.Title</div>
-                                <div class="media-tag">
-                                    <span>@result.MediaType.ToUpperInvariant()</span>
-                                    @if (IsInLibrary(result.TmdbId))
-                                    {
-                                        <span>* In Library</span>
-                                    }
-                                </div>
-                            </td>
-                            <td>
-                                <span class="release-pill">@FormatRelease(result.ReleaseDate)</span>
-                            </td>
-                            <td>
-                                @Truncate(result.Overview)
-                            </td>
-                            <td>
-                                <div class="table-actions">
-                                    <button class="btn btn-outline"
-                                            @onclick="() => SaveShowAsync(result)"
-                                            disabled="@IsSaving(result.TmdbId)">
-                                        @(IsSaving(result.TmdbId) ? "Saving..." : "Add to Library")
+                        <tr><td colspan="4" class="empty-cell">Enter a search query to fetch TMDB results.</td></tr>
+                    }
+                    else
+                    {
+                        @foreach (var result in searchResults)
+                        {
+                            var isImporting = importingTmdbIds.Contains(result.TmdbId);
+                            <tr>
+                                <td>@result.Title</td>
+                                <td>@(result.MediaType == MediaType.Movie ? "Movie" : "TV Show")</td>
+                                <td>@FormatRelease(result.ReleaseDate)</td>
+                                <td>
+                                    <button class="btn btn-outline" disabled="@isImporting" @onclick="() => ImportFromTmdbAsync(result)">
+                                        @(isImporting ? "Importing..." : "Import")
                                     </button>
-                                </div>
-                            </td>
-                        </tr>
+                                </td>
+                            </tr>
+                        }
                     }
                 </tbody>
             </table>
-        }
-        else if (hasSearched)
+        </div>
+    </section>
+
+    <section class="panel panel-details">
+        @if (selectedDetail is null)
         {
             <div class="empty-state">
-                <strong>No results found.</strong>
-                Try refining your search or double-check the spelling.
+                <strong>Select a title</strong>
+                Choose a media from the library to view details.
             </div>
         }
         else
         {
-            <div class="empty-state">
-                <strong>Ready to explore?</strong>
-                Search TMDB to begin building your MyShowtime collection.
+            <div class="detail-header">
+                <div class="poster">
+                    @if (!string.IsNullOrWhiteSpace(selectedDetail.PosterPath))
+                    {
+                        <img src="@BuildPosterUrl(selectedDetail.PosterPath)" alt="Poster" />
+                    }
+                    else
+                    {
+                        <div class="poster placeholder">No Artwork</div>
+                    }
+                </div>
+                <div class="detail-meta">
+                    <div class="detail-title">@selectedDetail.Title</div>
+                    <div class="detail-subtitle">@(selectedDetail.MediaType == MediaType.Movie ? "Movie" : "TV Show") · @FormatDate(selectedDetail.ReleaseDate)</div>
+                    <div class="detail-tags">
+                        <span class="status-pill">Priority @updateModel.Priority</span>
+                        <span class="status-pill">@selectedDetail.WatchState</span>
+                        @if (selectedDetail.Hidden)
+                        {
+                            <span class="status-pill status-hidden">Hidden</span>
+                        }
+                    </div>
+                    <div class="detail-genres">
+                        <strong>Genres:</strong> @FormatList(selectedDetail.Genres)
+                    </div>
+                    <div class="detail-cast">
+                        <strong>Cast:</strong> @FormatList(selectedDetail.Cast)
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(selectedDetail.AvailableOn))
+                    {
+                        <div class="detail-availability">
+                            <strong>Available on:</strong> @selectedDetail.AvailableOn
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="detail-body">
+                <div class="detail-actions">
+                    <div class="priority-control">
+                        <span class="label">Priority</span>
+                        <div class="priority-buttons">
+                            <button class="btn btn-outline" @onclick="() => AdjustPriority(-1)" disabled="@isSavingDetail">-</button>
+                            <input class="priority-input" value="@updateModel.Priority" readonly />
+                            <button class="btn btn-outline" @onclick="() => AdjustPriority(1)" disabled="@isSavingDetail">+</button>
+                        </div>
+                    </div>
+                    <div class="watchstate-control">
+                        <span class="label">Watch State</span>
+                        <div class="radio-group">
+                            <label><input type="radio" name="watch-state" value="Unwatched" checked="@IsWatchStateSelected(ViewState.Unwatched)" @onchange="_ => ChangeWatchState(ViewState.Unwatched)" /> Unwatched</label>
+                            <label><input type="radio" name="watch-state" value="Partial" checked="@IsWatchStateSelected(ViewState.Partial)" @onchange="_ => ChangeWatchState(ViewState.Partial)" /> Partial</label>
+                            <label><input type="radio" name="watch-state" value="Watched" checked="@IsWatchStateSelected(ViewState.Watched)" @onchange="_ => ChangeWatchState(ViewState.Watched)" /> Watched</label>
+                        </div>
+                    </div>
+                    <div class="toggle-group">
+                        <button class="btn btn-outline" @onclick="ToggleHidden" disabled="@isSavingDetail">@(updateModel.Hidden ? "Unhide" : "Hide")</button>
+                        <button class="btn btn-outline" @onclick="SyncSelectedAsync" disabled="@isSyncing">@(isSyncing ? "Refreshing..." : "Refresh from TMDB")</button>
+                    </div>
+                </div>
+
+                <div class="detail-summary">
+                    <h3>Overview</h3>
+                    <p>@(string.IsNullOrWhiteSpace(selectedDetail.Synopsis) ? "No synopsis available." : selectedDetail.Synopsis)</p>
+                </div>
+
+                <div class="detail-notes">
+                    <label class="label">Notes</label>
+                    <textarea class="form-control" rows="5" @bind="updateModel.Notes"></textarea>
+                    <div class="button-row">
+                        <button class="btn btn-primary" @onclick="SaveDetailChanges" disabled="@isSavingDetail">@(isSavingDetail ? "Saving..." : "Save Changes")</button>
+                    </div>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(detailFeedback))
+                {
+                    <div class="inline-feedback">@detailFeedback</div>
+                }
             </div>
         }
     </section>
 
-    <section class="panel">
-        <div class="panel-header">
-            <h2 class="panel-title">Library Overview</h2>
-            <p class="panel-subtitle">Your curated list of shows and films stays in sync with the desktop experience.</p>
-        </div>
-
-        <div class="library-meta">
-            <span class="status-pill">
-                @($"{(savedShows?.Count ?? 0)} title{(savedShows?.Count == 1 ? string.Empty : "s")}")
-            </span>
-            @if (!string.IsNullOrEmpty(GetLastUpdatedText()))
-            {
-                <span>@GetLastUpdatedText()</span>
-            }
-        </div>
-
-        @if (!string.IsNullOrWhiteSpace(libraryFeedback))
+    <section class="panel panel-episodes">
+        @if (selectedDetail is null)
         {
-            <div class="inline-feedback">@libraryFeedback</div>
+            <div class="empty-state">
+                <strong>No episode data</strong>
+                Select a TV show to view episode details.
+            </div>
         }
-
-        @if (isLoadingShows)
+        else if (selectedDetail.MediaType != MediaType.TvShow)
         {
-            <div class="loading-overlay">Loading saved titles...</div>
-        }
-        else if (savedShows?.Count > 0)
-        {
-            <table class="data-grid">
-                <thead>
-                    <tr>
-                        <th scope="col">Title</th>
-                        <th scope="col">Released</th>
-                        <th scope="col">Notes &amp; Details</th>
-                        <th scope="col">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var show in savedShows)
+            <div class="episode-empty-poster">
+                <div class="poster">
+                    @if (!string.IsNullOrWhiteSpace(selectedDetail.PosterPath))
                     {
-                        <tr>
-                            <td class="col-title">
-                                <div>@show.Title</div>
-                                <div class="media-tag">@show.MediaType.ToUpperInvariant()</div>
-                            </td>
-                            <td>
-                                <span class="release-pill">@FormatRelease(show.ReleaseDate)</span>
-                                <div class="notes-text">Added @FormatTimestamp(show.CreatedAtUtc)</div>
-                                @if (show.UpdatedAtUtc is not null)
-                                {
-                                    <div class="notes-text">Updated @FormatTimestamp(show.UpdatedAtUtc.Value)</div>
-                                }
-                            </td>
-                            <td>
-                                @if (!string.IsNullOrWhiteSpace(show.Overview))
-                                {
-                                    <div>@Truncate(show.Overview, 220)</div>
-                                }
-                                else
-                                {
-                                    <div class="notes-text">Overview not downloaded yet.</div>
-                                }
-
-                                @if (!string.IsNullOrWhiteSpace(show.Notes))
-                                {
-                                    <div class="notes-text">Notes: @Truncate(show.Notes, 160)</div>
-                                }
-                            </td>
-                            <td>
-                                <div class="table-actions">
-                                    <button class="btn btn-outline"
-                                            @onclick="() => RefreshShowAsync(show)"
-                                            disabled="@(refreshingId == show.Id)">
-                                        @(refreshingId == show.Id ? "Refreshing..." : "Refresh")
-                                    </button>
-                                    <button class="btn btn-danger"
-                                            @onclick="() => DeleteShowAsync(show.Id)"
-                                            disabled="@(deletingId == show.Id)">
-                                        @(deletingId == show.Id ? "Removing..." : "Remove")
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
+                        <img src="@BuildPosterUrl(selectedDetail.PosterPath)" alt="Poster" />
                     }
-                </tbody>
-            </table>
+                    else
+                    {
+                        <div class="poster placeholder">No Artwork</div>
+                    }
+                </div>
+                <p>This media does not have episodes.</p>
+            </div>
+        }
+        else if (episodes.Count == 0)
+        {
+            <div class="empty-state">
+                <strong>No episodes synced</strong>
+                Use refresh to import episodes from TMDB.
+            </div>
         }
         else
         {
-            <div class="empty-state">
-                <strong>Your library is empty.</strong>
-                Use the TMDB search panel to start adding shows and films.
+            <div class="episodes-layout">
+                <div class="episode-detail">
+                    <h3>Episode Details</h3>
+                    @if (selectedEpisode is null)
+                    {
+                        <p class="placeholder">Select an episode to view details.</p>
+                    }
+                    else
+                    {
+                        <div class="episode-meta">
+                            <div class="episode-title">@selectedEpisode.Title (@FormatEpisodeCode(selectedEpisode))</div>
+                            <div class="episode-date">Aired @FormatDate(selectedEpisode.AirDate)</div>
+                            <div class="episode-watch">
+                                <span class="label">Watch State</span>
+                                <div class="radio-group">
+                                    <label><input type="radio" name="episode-watch" value="Unwatched" checked="@IsEpisodeWatchState(ViewState.Unwatched)" @onchange="_ => UpdateEpisodeState(ViewState.Unwatched)" /> Unwatched</label>
+                                    <label><input type="radio" name="episode-watch" value="Partial" checked="@IsEpisodeWatchState(ViewState.Partial)" @onchange="_ => UpdateEpisodeState(ViewState.Partial)" /> Partial</label>
+                                    <label><input type="radio" name="episode-watch" value="Watched" checked="@IsEpisodeWatchState(ViewState.Watched)" @onchange="_ => UpdateEpisodeState(ViewState.Watched)" /> Watched</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="episode-synopsis">
+                            <strong>Synopsis:</strong>
+                            <p>@(string.IsNullOrWhiteSpace(selectedEpisode.Synopsis) ? "No synopsis available." : selectedEpisode.Synopsis)</p>
+                        </div>
+                    }
+                </div>
+                <div class="episode-list">
+                    <div class="episode-list-header">
+                        <h3>Episodes</h3>
+                        <label><input type="checkbox" @bind="hideSpecials" @bind:after="ApplyEpisodeFilter" /> Hide specials</label>
+                    </div>
+                    <div class="table-scroll">
+                        <table class="data-grid">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Title</th>
+                                    <th scope="col">Episode</th>
+                                    <th scope="col">Air Date</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var episode in filteredEpisodes)
+                                {
+                                    var isSelected = selectedEpisode?.Id == episode.Id;
+                                    <tr class="@BuildEpisodeRowClasses(episode, isSelected)" @onclick="() => SelectEpisode(episode)">
+                                        <td>@episode.Title</td>
+                                        <td class="col-center">@FormatEpisodeCode(episode)</td>
+                                        <td>@FormatDate(episode.AirDate)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         }
     </section>
 </div>
 
 @code {
-    private string searchTerm = string.Empty;
-    private bool isSearching;
-    private bool hasSearched;
-    private bool isLoadingShows;
+    private const string PosterBaseUrl = "https://image.tmdb.org/t/p/w342";
+
+    private List<MediaSummaryDto> library = new();
+    private List<MediaSummaryDto> filteredLibrary = new();
+    private List<TmdbSearchResultDto> searchResults = new();
+    private HashSet<int> importingTmdbIds = new();
+    private List<EpisodeDto> episodes = new();
+    private List<EpisodeDto> filteredEpisodes = new();
+
+    private Guid? lastSelectedMediaId;
+    private bool bannerVisible = true;
+    private MediaSummaryDto? selectedSummary;
+    private MediaDetailDto? selectedDetail;
+    private EpisodeDto? selectedEpisode;
+
+    private UpdateMediaRequest updateModel = new()
+    {
+        Priority = 3,
+        WatchState = ViewState.Unwatched
+    };
+
+    private string? libraryError;
     private string? searchFeedback;
-    private string? libraryFeedback;
-    private List<TmdbSearchResultDto>? searchResults;
-    private List<ShowDto>? savedShows;
-    private readonly HashSet<int> savingTmdbIds = new();
-    private Guid? refreshingId;
-    private Guid? deletingId;
+    private string? detailFeedback;
+    private bool isSavingDetail;
+    private bool isSyncing;
+    private bool isSearching;
+    private bool filterUnwatched = true;
+    private bool filterPartial = true;
+    private bool filterWatched = true;
+    private bool includeHidden;
+    private bool hideSpecials = true;
+    private string searchTerm = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadSavedShowsAsync();
+        await ReadLastSelectedMediaAsync();
+        bannerVisible = await ShouldShowZoomBannerAsync();
+        await LoadLibraryAsync(lastSelectedMediaId);
     }
 
-    private async Task LoadSavedShowsAsync()
+    private async Task LoadLibraryAsync(Guid? preserveSelection = null)
     {
         try
         {
-            isLoadingShows = true;
-            savedShows = (await ShowService.GetShowsAsync()).ToList();
+            libraryError = null;
+            var items = await MediaService.GetMediaAsync(includeHidden, CancellationToken.None);
+            library = items.ToList();
+            ApplyFilters();
+
+            if (library.Count == 0)
+            {
+                selectedSummary = null;
+                selectedDetail = null;
+                selectedEpisode = null;
+                episodes.Clear();
+                filteredEpisodes.Clear();
+                lastSelectedMediaId = null;
+                await SaveLastSelectedMediaAsync(null);
+                return;
+            }
+
+            var selectionId = preserveSelection ?? selectedSummary?.Id ?? lastSelectedMediaId;
+            if (selectionId is not null)
+            {
+                var summary = library.FirstOrDefault(m => m.Id == selectionId);
+                if (summary is not null)
+                {
+                    await SelectMediaAsync(summary, true);
+                }
+                else if (lastSelectedMediaId.HasValue)
+                {
+                    await SaveLastSelectedMediaAsync(null);
+                    lastSelectedMediaId = null;
+                }
+            }
         }
         catch (Exception ex)
         {
-            libraryFeedback = $"Failed to load saved shows: {ex.Message}";
+            libraryError = $"Failed to load library: {ex.Message}";
         }
-        finally
+    }
+
+    private async Task IncludeHiddenChanged()
+    {
+        await LoadLibraryAsync(selectedSummary?.Id);
+    }
+
+    private void ApplyFilters()
+    {
+        var query = library.AsEnumerable();
+        if (!filterUnwatched)
         {
-            isLoadingShows = false;
-            StateHasChanged();
+            query = query.Where(m => m.WatchState != ViewState.Unwatched);
         }
+        if (!filterPartial)
+        {
+            query = query.Where(m => m.WatchState != ViewState.Partial);
+        }
+        if (!filterWatched)
+        {
+            query = query.Where(m => m.WatchState != ViewState.Watched);
+        }
+        if (!includeHidden)
+        {
+            query = query.Where(m => !m.Hidden);
+        }
+
+        filteredLibrary = query.OrderBy(m => m.Priority).ThenBy(m => m.Title).ToList();
+        StateHasChanged();
+    }
+
+    private async Task SelectMediaAsync(MediaSummaryDto summary, bool suppressReload = false)
+    {
+        if (!suppressReload && summary.Id == selectedSummary?.Id)
+        {
+            return;
+        }
+
+        selectedSummary = summary;
+        selectedDetail = null;
+        selectedEpisode = null;
+        episodes.Clear();
+        filteredEpisodes.Clear();
+        detailFeedback = null;
+
+        try
+        {
+            selectedDetail = await MediaService.GetMediaDetailAsync(summary.Id) ?? new MediaDetailDto(
+                summary.Id,
+                summary.TmdbId,
+                summary.MediaType,
+                summary.Title,
+                summary.ReleaseDate,
+                summary.Priority,
+                summary.Source,
+                summary.WatchState,
+                summary.Hidden,
+                null,
+                null,
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                null,
+                summary.Source,
+                summary.CreatedAtUtc,
+                summary.UpdatedAtUtc,
+                summary.LastSyncedAtUtc);
+
+            updateModel = new UpdateMediaRequest
+            {
+                Priority = selectedDetail.Priority,
+                WatchState = selectedDetail.WatchState,
+                Hidden = selectedDetail.Hidden,
+                Source = selectedDetail.Source,
+                AvailableOn = selectedDetail.AvailableOn,
+                Notes = selectedDetail.Notes
+            };
+
+            lastSelectedMediaId = summary.Id;
+            await SaveLastSelectedMediaAsync(lastSelectedMediaId);
+
+            if (selectedDetail.MediaType == MediaType.TvShow)
+            {
+                episodes = (await MediaService.GetEpisodesAsync(summary.Id)).ToList();
+                ApplyEpisodeFilter();
+            }
+        }
+        catch (Exception ex)
+        {
+            detailFeedback = $"Failed to load media details: {ex.Message}";
+        }
+    }
+
+    private void ApplyEpisodeFilter()
+    {
+        var query = episodes.AsEnumerable();
+        if (hideSpecials)
+        {
+            query = query.Where(e => !e.IsSpecial);
+        }
+        filteredEpisodes = query.OrderBy(e => e.SeasonNumber).ThenBy(e => e.EpisodeNumber).ToList();
+    }
+
+    private void SelectEpisode(EpisodeDto episode)
+    {
+        selectedEpisode = episode;
+        StateHasChanged();
     }
 
     private async Task SearchAsync()
     {
         if (string.IsNullOrWhiteSpace(searchTerm))
         {
-            searchFeedback = "Enter at least one character to start searching TMDB.";
-            hasSearched = false;
+            searchFeedback = "Enter a search term.";
+            searchResults.Clear();
             return;
         }
 
-        searchFeedback = null;
         isSearching = true;
-        hasSearched = true;
-
+        searchFeedback = null;
         try
         {
-            var results = await ShowService.SearchTmdbAsync(searchTerm);
-            searchResults = results.ToList();
-
+            var results = await MediaService.SearchTmdbAsync(searchTerm, CancellationToken.None);
+            searchResults = results
+                .Where(r => r.MediaType is MediaType.Movie or MediaType.TvShow)
+                .Take(25)
+                .ToList();
             if (searchResults.Count == 0)
             {
-                searchFeedback = $"No matches found for \"{searchTerm}\".";
+                searchFeedback = $"No results for '{searchTerm}'.";
             }
         }
         catch (Exception ex)
         {
-            searchFeedback = $"Unable to contact TMDB right now: {ex.Message}";
+            searchFeedback = $"Search failed: {ex.Message}";
         }
         finally
         {
@@ -261,153 +522,339 @@
         }
     }
 
-    private async Task SaveShowAsync(TmdbSearchResultDto result)
+    private void ClearSearch()
     {
-        if (!savingTmdbIds.Add(result.TmdbId))
+        searchTerm = string.Empty;
+        searchResults.Clear();
+        searchFeedback = null;
+    }
+
+    private async Task ImportFromTmdbAsync(TmdbSearchResultDto result)
+    {
+        if (!importingTmdbIds.Add(result.TmdbId))
         {
             return;
         }
 
-        libraryFeedback = null;
-
         try
         {
-            var request = new SaveShowRequest
+            var request = new ImportMediaRequest
             {
                 TmdbId = result.TmdbId,
-                Title = result.Title,
                 MediaType = result.MediaType,
-                Overview = result.Overview,
-                PosterPath = result.PosterPath,
-                ReleaseDate = result.ReleaseDate
+                Priority = 3
             };
 
-            var saved = await ShowService.SaveShowAsync(request);
-            if (saved is not null)
+            var detail = await MediaService.ImportMediaAsync(request);
+            if (detail is not null)
             {
-                savedShows ??= new();
-                var index = savedShows.FindIndex(s => s.TmdbId == saved.TmdbId);
-                if (index >= 0)
-                {
-                    savedShows[index] = saved;
-                }
-                else
-                {
-                    savedShows.Insert(0, saved);
-                }
-
-                libraryFeedback = $"\"{saved.Title}\" synced into your library.";
+                UpsertSummary(detail);
+                ApplyFilters();
+                await SelectMediaAsync(new MediaSummaryDto(
+                    detail.Id,
+                    detail.TmdbId,
+                    detail.MediaType,
+                    detail.Title,
+                    detail.ReleaseDate,
+                    detail.Priority,
+                    detail.Source,
+                    detail.WatchState,
+                    detail.Hidden,
+                    detail.CreatedAtUtc,
+                    detail.UpdatedAtUtc,
+                    detail.LastSyncedAtUtc));
             }
         }
         catch (Exception ex)
         {
-            libraryFeedback = $"Unable to save \"{result.Title}\": {ex.Message}";
+            searchFeedback = $"Import failed: {ex.Message}";
         }
         finally
         {
-            savingTmdbIds.Remove(result.TmdbId);
+            importingTmdbIds.Remove(result.TmdbId);
         }
     }
 
-    private async Task DeleteShowAsync(Guid id)
+    private void UpsertSummary(MediaDetailDto detail)
     {
-        deletingId = id;
-        libraryFeedback = null;
+        var summary = new MediaSummaryDto(
+            detail.Id,
+            detail.TmdbId,
+            detail.MediaType,
+            detail.Title,
+            detail.ReleaseDate,
+            detail.Priority,
+            detail.Source,
+            detail.WatchState,
+            detail.Hidden,
+            detail.CreatedAtUtc,
+            detail.UpdatedAtUtc,
+            detail.LastSyncedAtUtc);
+
+        var index = library.FindIndex(m => m.Id == detail.Id);
+        if (index >= 0)
+        {
+            library[index] = summary;
+        }
+        else
+        {
+            library.Insert(0, summary);
+        }
+    }
+
+    private async Task SaveDetailChanges()
+    {
+        if (selectedSummary is null)
+        {
+            return;
+        }
+
+        isSavingDetail = true;
+        detailFeedback = null;
+        try
+        {
+            var detail = await MediaService.UpdateMediaAsync(selectedSummary.Id, updateModel);
+            if (detail is not null)
+            {
+                selectedDetail = detail;
+                UpsertSummary(detail);
+                ApplyFilters();
+                selectedSummary = library.FirstOrDefault(m => m.Id == detail.Id);
+            }
+            else
+            {
+                detailFeedback = "Unable to save changes.";
+            }
+        }
+        catch (Exception ex)
+        {
+            detailFeedback = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            isSavingDetail = false;
+        }
+    }
+
+    private async Task ChangeWatchState(ViewState state)
+    {
+        if (updateModel.WatchState == state)
+        {
+            return;
+        }
+
+        updateModel.WatchState = state;
+        await SaveDetailChanges();
+    }
+
+    private async Task AdjustPriority(int delta)
+    {
+        var newValue = Math.Clamp(updateModel.Priority + delta, 0, 10);
+        if (newValue == updateModel.Priority)
+        {
+            return;
+        }
+        updateModel.Priority = newValue;
+        await SaveDetailChanges();
+    }
+
+    private async Task ToggleHidden()
+    {
+        updateModel.Hidden = !updateModel.Hidden;
+        await SaveDetailChanges();
+        await LoadLibraryAsync(selectedSummary?.Id);
+    }
+
+    private async Task SyncSelectedAsync()
+    {
+        if (selectedSummary is null)
+        {
+            return;
+        }
+
+        isSyncing = true;
+        detailFeedback = null;
+        try
+        {
+            var detail = await MediaService.SyncMediaAsync(selectedSummary.Id);
+            if (detail is not null)
+            {
+                selectedDetail = detail;
+                updateModel.Priority = detail.Priority;
+                updateModel.WatchState = detail.WatchState;
+                updateModel.Hidden = detail.Hidden;
+                updateModel.Source = detail.Source;
+                updateModel.AvailableOn = detail.AvailableOn;
+                updateModel.Notes = detail.Notes;
+
+                UpsertSummary(detail);
+                ApplyFilters();
+                selectedSummary = library.FirstOrDefault(m => m.Id == detail.Id);
+
+                if (detail.MediaType == MediaType.TvShow)
+                {
+                    episodes = (await MediaService.GetEpisodesAsync(detail.Id)).ToList();
+                    ApplyEpisodeFilter();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            detailFeedback = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            isSyncing = false;
+        }
+    }
+
+    private async Task UpdateEpisodeState(ViewState state)
+    {
+        if (selectedSummary is null || selectedEpisode is null)
+        {
+            return;
+        }
+
+        if (selectedEpisode.WatchState == state)
+        {
+            return;
+        }
 
         try
         {
-            await ShowService.DeleteShowAsync(id);
-            if (savedShows is not null)
+            var updated = await MediaService.UpdateEpisodeViewStateAsync(selectedSummary.Id, selectedEpisode.Id, state);
+            if (updated is not null)
             {
-                savedShows.RemoveAll(s => s.Id == id);
-            }
-
-            libraryFeedback = "Title removed from your library.";
-        }
-        catch (Exception ex)
-        {
-            libraryFeedback = $"Unable to remove the selected title: {ex.Message}";
-        }
-        finally
-        {
-            deletingId = null;
-        }
-    }
-
-    private async Task RefreshShowAsync(ShowDto show)
-    {
-        refreshingId = show.Id;
-        libraryFeedback = null;
-
-        try
-        {
-            var updated = await ShowService.RefreshShowAsync(show.TmdbId, show.MediaType);
-            if (updated is not null && savedShows is not null)
-            {
-                var index = savedShows.FindIndex(s => s.Id == updated.Id);
+                var index = episodes.FindIndex(e => e.Id == updated.Id);
                 if (index >= 0)
                 {
-                    savedShows[index] = updated;
+                    episodes[index] = updated;
                 }
-
-                libraryFeedback = $"\"{updated.Title}\" refreshed from TMDB.";
+                ApplyEpisodeFilter();
+                selectedEpisode = updated;
             }
         }
         catch (Exception ex)
         {
-            libraryFeedback = $"Unable to refresh \"{show.Title}\": {ex.Message}";
-        }
-        finally
-        {
-            refreshingId = null;
+            detailFeedback = $"Episode update failed: {ex.Message}";
         }
     }
 
-    private bool IsSaving(int tmdbId) => savingTmdbIds.Contains(tmdbId);
-
-    private bool IsInLibrary(int tmdbId) =>
-        savedShows?.Any(s => s.TmdbId == tmdbId) ?? false;
-
-    private static string FormatRelease(string? releaseDate)
+    private async Task<bool> ShouldShowZoomBannerAsync()
     {
-        if (string.IsNullOrWhiteSpace(releaseDate))
+        try
         {
-            return "Date TBD";
+            return await JS.InvokeAsync<bool>("myShowtimeState.shouldShowZoomBanner");
         }
-
-        return DateOnly.TryParse(releaseDate, out var parsed)
-            ? parsed.ToString("MMM dd, yyyy")
-            : releaseDate;
+        catch
+        {
+            return true;
+        }
     }
 
-    private static string FormatRelease(DateOnly? releaseDate) =>
-        releaseDate?.ToString("MMM dd, yyyy") ?? "Date TBD";
-
-    private static string Truncate(string? value, int maxLength = 160)
+    private async Task ReadLastSelectedMediaAsync()
     {
-        if (string.IsNullOrWhiteSpace(value))
+        try
         {
-            return "No synopsis available yet.";
+            var stored = await JS.InvokeAsync<string?>("myShowtimeState.getLastMediaId");
+            if (!string.IsNullOrWhiteSpace(stored) && Guid.TryParse(stored, out var parsed))
+            {
+                lastSelectedMediaId = parsed;
+            }
+            else
+            {
+                lastSelectedMediaId = null;
+            }
         }
-
-        var trimmed = value.Trim();
-        return trimmed.Length <= maxLength
-            ? trimmed
-            : $"{trimmed[..Math.Min(trimmed.Length, maxLength)].TrimEnd()}...";
+        catch
+        {
+            lastSelectedMediaId = null;
+        }
     }
 
-    private static string FormatTimestamp(DateTime value) =>
-        value.ToLocalTime().ToString("MMM dd, yyyy 'at' h:mm tt");
-
-    private string GetLastUpdatedText()
+    private async Task SaveLastSelectedMediaAsync(Guid? id)
     {
-        var latest = savedShows?
-            .Select(s => s.UpdatedAtUtc ?? s.CreatedAtUtc)
-            .OrderByDescending(d => d)
-            .FirstOrDefault();
+        try
+        {
+            if (id.HasValue)
+            {
+                await JS.InvokeVoidAsync("myShowtimeState.setLastMediaId", id.Value.ToString());
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("myShowtimeState.clearLastMediaId");
+            }
+        }
+        catch
+        {
+            // Ignored: persistence failures should not break UI flow.
+        }
+    }
 
-        return latest is null
-            ? string.Empty
-            : $"Last change {FormatTimestamp(latest.Value)}";
+    private async Task DismissBanner()
+    {
+        bannerVisible = false;
+        try
+        {
+            await JS.InvokeVoidAsync("myShowtimeState.markZoomBannerDismissed");
+        }
+        catch
+        {
+            // ignore persistence errors
+        }
+    }
+
+    private bool IsWatchStateSelected(ViewState state) => updateModel.WatchState == state;
+    private bool IsEpisodeWatchState(ViewState state) => selectedEpisode?.WatchState == state;
+
+    private string BuildPosterUrl(string path) => string.IsNullOrWhiteSpace(path) ? string.Empty : $"{PosterBaseUrl}{path}";
+
+    private static string FormatDate(DateOnly? date) => date?.ToString("MMM dd, yyyy") ?? "Date TBD";
+    private static string FormatRelease(string? date) => string.IsNullOrWhiteSpace(date) ? "Date TBD" : date;
+    private static string FormatList(IEnumerable<string> values) => !values.Any() ? "Unknown" : string.Join(", ", values);
+
+    private static string FormatEpisodeCode(EpisodeDto episode)
+    {
+        return $"S{episode.SeasonNumber:00}E{episode.EpisodeNumber:00}";
+    }
+
+    private string BuildMediaRowClasses(MediaSummaryDto item, bool isSelected)
+    {
+        var classes = new List<string> { "state-pill" };
+        classes.Add(item.WatchState switch
+        {
+            ViewState.Watched => "row-watched",
+            ViewState.Partial => "row-partial",
+            _ => "row-unwatched"
+        });
+        if (item.Hidden)
+        {
+            classes.Add("row-hidden");
+        }
+        if (isSelected)
+        {
+            classes.Add("row-selected");
+        }
+        return string.Join(' ', classes);
+    }
+
+    private string BuildEpisodeRowClasses(EpisodeDto episode, bool isSelected)
+    {
+        var classes = new List<string> { "state-pill" };
+        classes.Add(episode.WatchState switch
+        {
+            ViewState.Watched => "row-watched",
+            ViewState.Partial => "row-partial",
+            _ => "row-unwatched"
+        });
+        if (episode.IsSpecial)
+        {
+            classes.Add("row-special");
+        }
+        if (isSelected)
+        {
+            classes.Add("row-selected");
+        }
+        return string.Join(' ', classes);
     }
 }
