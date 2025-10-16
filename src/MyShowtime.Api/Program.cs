@@ -583,25 +583,23 @@ static async Task<TmdbSearchResponseDto> EnrichSearchSourcesAsync(
     var results = new List<TmdbSearchItemDto>(dto.Results.Count);
     using var semaphore = new SemaphoreSlim(3);
 
-    foreach (var item in dto.Results)
+    var enrichmentTasks = dto.Results.Select(async item =>
     {
         if (cancellationToken.IsCancellationRequested)
         {
-            break;
+            return item;
         }
 
         var mediaType = item.MediaType?.ToLowerInvariant();
         if (mediaType is not "movie" and not "tv")
         {
-            results.Add(item with { Source = null });
-            continue;
+            return item with { Source = null };
         }
 
         var cacheKey = $"tmdb:source:{mediaType}:{item.Id}";
         if (cache.TryGetValue(cacheKey, out string? cachedSource))
         {
-            results.Add(item with { Source = NormalizeSource(cachedSource) });
-            continue;
+            return item with { Source = NormalizeSource(cachedSource) };
         }
 
         await semaphore.WaitAsync(cancellationToken);
@@ -625,13 +623,10 @@ static async Task<TmdbSearchResponseDto> EnrichSearchSourcesAsync(
             Size = 1
         });
 
-        results.Add(item with { Source = NormalizeSource(resolvedSource) });
+        return item with { Source = NormalizeSource(resolvedSource) };
+    });
 
-        if (!string.IsNullOrEmpty(resolvedSource))
-        {
-            await Task.Delay(150, cancellationToken);
-        }
-    }
+    results = (await Task.WhenAll(enrichmentTasks)).ToList();
 
     return dto with { Results = results };
 }
