@@ -1,12 +1,15 @@
 @page "/"
 
+@using Microsoft.AspNetCore.Components.Web
 @using Microsoft.JSInterop
 @using MyShowtime.Client.Services
+@using MyShowtime.Client
 @using MyShowtime.Shared.Dtos
 @using MyShowtime.Shared.Enums
 @using MyShowtime.Shared.Requests
 @inject MediaLibraryService MediaService
 @inject IJSRuntime JS
+@implements IDisposable
 
 <PageTitle>MyShowtime Library</PageTitle>
 
@@ -40,10 +43,30 @@
             <table class="data-grid">
                 <thead>
                     <tr>
-                        <th scope="col">Title</th>
-                        <th scope="col" class="col-center">Priority</th>
-                        <th scope="col">Type</th>
-                        <th scope="col">Released</th>
+                        <th scope="col">
+                            <button type="button" class="sort-button" @onclick="() => SortLibrary(LibrarySortTitle)">
+                                <span>Title</span>
+                                <span class="sort-indicator">@BuildSortIndicator(librarySortColumn, LibrarySortTitle, librarySortAscending)</span>
+                            </button>
+                        </th>
+                        <th scope="col" class="col-center">
+                            <button type="button" class="sort-button sort-button-center" @onclick="() => SortLibrary(LibrarySortPriority)">
+                                <span>Priority</span>
+                                <span class="sort-indicator">@BuildSortIndicator(librarySortColumn, LibrarySortPriority, librarySortAscending)</span>
+                            </button>
+                        </th>
+                        <th scope="col">
+                            <button type="button" class="sort-button" @onclick="() => SortLibrary(LibrarySortType)">
+                                <span>Type</span>
+                                <span class="sort-indicator">@BuildSortIndicator(librarySortColumn, LibrarySortType, librarySortAscending)</span>
+                            </button>
+                        </th>
+                        <th scope="col">
+                            <button type="button" class="sort-button" @onclick="() => SortLibrary(LibrarySortRelease)">
+                                <span>Released</span>
+                                <span class="sort-indicator">@BuildSortIndicator(librarySortColumn, LibrarySortRelease, librarySortAscending)</span>
+                            </button>
+                        </th>
                     </tr>
                 </thead>
                 <tbody>
@@ -69,51 +92,85 @@
                 <p class="panel-subtitle">Find new movies or TV shows to import into the library.</p>
             </div>
             <div class="search-controls">
-                <input class="form-control" placeholder="Search TMDB..." @bind="searchTerm" @bind:event="oninput" />
-                <button class="btn btn-primary" @onclick="SearchAsync" disabled="@isSearching">@(isSearching ? "Searching..." : "Search")</button>
+                <input class="form-control" placeholder="Search TMDB..." @bind="searchTerm" @bind:event="oninput" @onkeydown="HandleSearchKeyDown" />
+                <div class="search-scope-group" role="radiogroup" aria-label="Search scope">
+                    <label class="search-scope-option" for="search-media">
+                        <input id="search-media" type="radio" name="search-scope" value="@SearchScopeMedia" checked="@IsSearchType(SearchScopeMedia)" @onchange='@(() => SetSearchType(SearchScopeMedia))' />
+                        <span>Media</span>
+                    </label>
+                    <label class="search-scope-option" for="search-people">
+                        <input id="search-people" type="radio" name="search-scope" value="@SearchScopePeople" checked="@IsSearchType(SearchScopePeople)" @onchange='@(() => SetSearchType(SearchScopePeople))' />
+                        <span>People</span>
+                    </label>
+                </div>
+                <button class="btn btn-primary" @onclick="TriggerImmediateSearch" disabled="@IsSearchButtonDisabled">@(isSearching ? "Searching..." : "Search")</button>
                 <button class="btn btn-outline" @onclick="ClearSearch" disabled="@isSearching && string.IsNullOrWhiteSpace(searchTerm)">Clear</button>
             </div>
         </header>
-        @if (!string.IsNullOrWhiteSpace(searchFeedback))
-        {
-            <div class="inline-feedback">@searchFeedback</div>
-        }
+        <div class="search-hint-row">
+            <span class="search-hint">@(!string.IsNullOrWhiteSpace(searchFeedback) ? searchFeedback : "Search TMDB to see results.")</span>
+            @if (searchServedFromCache)
+            {
+                <span class="cache-badge" title="Served from in-memory cache">cache</span>
+            }
+        </div>
         <div class="table-scroll">
             <table class="data-grid">
                 <colgroup>
-                    <col style="width:40%" />
-                    <col style="width:20%" />
-                    <col style="width:20%" />
+                    <col style="width:60%" />
+                    <col style="width:10%" />
+                    <col style="width:10%" />
                     <col style="width:20%" />
                 </colgroup>
                 <thead>
                     <tr>
-                        <th scope="col">Title</th>
-                        <th scope="col">Type</th>
-                        <th scope="col">Released</th>
-                        <th scope="col">Source</th>
+                        <th scope="col">
+                            <button type="button" class="sort-button" @onclick="() => SortSearch(SearchSortTitle)">
+                                <span>Title</span>
+                                <span class="sort-indicator">@BuildSortIndicator(searchSortColumn, SearchSortTitle, searchSortAscending)</span>
+                            </button>
+                        </th>
+                        <th scope="col">
+                            <button type="button" class="sort-button" @onclick="() => SortSearch(SearchSortType)">
+                                <span>Type</span>
+                                <span class="sort-indicator">@BuildSortIndicator(searchSortColumn, SearchSortType, searchSortAscending)</span>
+                            </button>
+                        </th>
+                        <th scope="col">
+                            <button type="button" class="sort-button" @onclick="() => SortSearch(SearchSortRelease)">
+                                <span>Release</span>
+                                <span class="sort-indicator">@BuildSortIndicator(searchSortColumn, SearchSortRelease, searchSortAscending)</span>
+                            </button>
+                        </th>
+                        <th scope="col">
+                            <button type="button" class="sort-button" @onclick="() => SortSearch(SearchSortSource)">
+                                <span>Source</span>
+                                <span class="sort-indicator">@BuildSortIndicator(searchSortColumn, SearchSortSource, searchSortAscending)</span>
+                            </button>
+                        </th>
                     </tr>
                 </thead>
                 <tbody>
-                    @if (searchResults.Count == 0)
+                    @foreach (var result in searchResults)
                     {
-                        <tr><td colspan="4" class="empty-cell">Enter a search query to fetch TMDB results.</td></tr>
-                    }
-                    else
-                    {
-                        @foreach (var result in searchResults)
-                        {
-                            var isSelected = selectedSearchResult?.TmdbId == result.TmdbId && selectedSearchResult.MediaType == result.MediaType;
-                            <tr class="@BuildSearchRowClasses(result, isSelected)" @onclick="() => SelectSearchResultAsync(result)">
-                                <td>@result.Title</td>
-                                <td>@(result.MediaType == MediaType.Movie ? "Movie" : "TV Show")</td>
-                                <td>@FormatRelease(result.ReleaseDate)</td>
-                                <td>@FormatSource(result.AvailableOn)</td>
-                            </tr>
-                        }
+                        var isSelected = selectedSearchResult?.Id == result.Id && string.Equals(selectedSearchResult.MediaType, result.MediaType, StringComparison.OrdinalIgnoreCase);
+                        <tr class="@BuildSearchRowClasses(result, isSelected)" @onclick="() => SelectSearchResultAsync(result)">
+                            <td>@result.Title</td>
+                            <td>@FormatSearchType(result)</td>
+                            <td>@FormatRelease(result.ReleaseDate)</td>
+                            <td>@FormatSource(result.Source)</td>
+                        </tr>
                     }
                 </tbody>
             </table>
+            @if (totalSearchPages > 1 && searchResults.Count > 0)
+            {
+                <div class="table-footer">
+                    <button class="btn btn-outline" @onclick="GoToPreviousPage" disabled="@(!CanGoToPreviousPage || isSearching)">Previous</button>
+                    <span class="page-indicator">Page @currentSearchPage of @totalSearchPages</span>
+                    <button class="btn btn-outline" @onclick="GoToNextPage" disabled="@(!CanGoToNextPage || isSearching)">Next</button>
+                </div>
+            }
         </div>
     </section>
 
@@ -160,7 +217,24 @@
                         <strong>Genres:</strong> @FormatList(detail.Genres)
                     </div>
                     <div class="detail-cast">
-                        <strong>Cast:</strong> @FormatList(detail.Cast)
+                        <strong>Cast/Crew:</strong>
+                        <div class="cast-list">
+                            @if (detail.Cast.Any())
+                            {
+                                foreach (var name in detail.Cast)
+                                {
+                                    var trimmedName = name?.Trim();
+                                    if (!string.IsNullOrWhiteSpace(trimmedName))
+                                    {
+                                        <button type="button" class="cast-chip" @onclick="async () => await SearchByPersonAsync(trimmedName!)">@trimmedName</button>
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                <span class="cast-empty">Unknown</span>
+                            }
+                        </div>
                     </div>
                     @if (!string.IsNullOrWhiteSpace(detail.AvailableOn))
                     {
@@ -310,9 +384,24 @@
                         <table class="data-grid">
                             <thead>
                                 <tr>
-                                    <th scope="col">Title</th>
-                                    <th scope="col" class="col-center">Episode</th>
-                                    <th scope="col">Air Date</th>
+                                    <th scope="col">
+                                        <button type="button" class="sort-button" @onclick="() => SortEpisodes(EpisodeSortTitle)">
+                                            <span>Title</span>
+                                            <span class="sort-indicator">@BuildSortIndicator(episodeSortColumn, EpisodeSortTitle, episodeSortAscending)</span>
+                                        </button>
+                                    </th>
+                                    <th scope="col" class="col-center">
+                                        <button type="button" class="sort-button sort-button-center" @onclick="() => SortEpisodes(EpisodeSortNumber)">
+                                            <span>Episode</span>
+                                            <span class="sort-indicator">@BuildSortIndicator(episodeSortColumn, EpisodeSortNumber, episodeSortAscending)</span>
+                                        </button>
+                                    </th>
+                                    <th scope="col">
+                                        <button type="button" class="sort-button" @onclick="() => SortEpisodes(EpisodeSortAirDate)">
+                                            <span>Air Date</span>
+                                            <span class="sort-indicator">@BuildSortIndicator(episodeSortColumn, EpisodeSortAirDate, episodeSortAscending)</span>
+                                        </button>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -336,18 +425,49 @@
 
 @code {
     private const string PosterBaseUrl = "https://image.tmdb.org/t/p/w342";
+    private const string SearchScopeMedia = "media";
+    private const string SearchScopePeople = "person";
+    private const string LibrarySortTitle = "title";
+    private const string LibrarySortPriority = "priority";
+    private const string LibrarySortType = "type";
+    private const string LibrarySortRelease = "release";
+    private const string SearchSortTitle = "title";
+    private const string SearchSortType = "type";
+    private const string SearchSortRelease = "release";
+    private const string SearchSortSource = "source";
+    private const string EpisodeSortTitle = "title";
+    private const string EpisodeSortNumber = "episode";
+    private const string EpisodeSortAirDate = "airdate";
 
     private List<MediaSummaryDto> library = new();
     private List<MediaSummaryDto> filteredLibrary = new();
-    private List<TmdbSearchResultDto> searchResults = new();
+    private List<TmdbSearchItemDto> searchResults = new();
     private List<EpisodeDto> episodes = new();
     private List<EpisodeDto> filteredEpisodes = new();
+    private readonly Dictionary<string, TmdbSearchResponseDto> searchCache = new();
+    private readonly LinkedList<string> searchCacheOrder = new();
+    private const int SearchCacheLimit = 10;
+    private CancellationTokenSource? activeSearchRequestCts;
+    private CancellationTokenSource? previewCts;
+    private long searchRequestVersion;
+    private string searchType = SearchScopeMedia;
+    private int currentSearchPage = 1;
+    private int totalSearchPages = 1;
+    private int totalSearchResults;
+    private bool searchServedFromCache;
+    private string librarySortColumn = LibrarySortPriority;
+    private bool librarySortAscending = true;
+    private string? searchSortColumn;
+    private bool searchSortAscending = true;
+    private string episodeSortColumn = EpisodeSortNumber;
+    private bool episodeSortAscending = true;
+    private bool isDisposed;
 
     private Guid? lastSelectedMediaId;
     private bool bannerVisible = true;
     private MediaSummaryDto? selectedSummary;
     private MediaDetailDto? selectedDetail;
-    private TmdbSearchResultDto? selectedSearchResult;
+    private TmdbSearchItemDto? selectedSearchResult;
     private MediaDetailDto? searchPreviewDetail;
     private EpisodeDto? selectedEpisode;
 
@@ -366,6 +486,8 @@
     private bool isSearching;
     private bool isLoadingPreview;
     private bool isAddingPreview;
+    private bool IsPeopleSearch => string.Equals(searchType, SearchScopePeople, StringComparison.OrdinalIgnoreCase);
+    private bool IsSearchButtonDisabled => isSearching || (IsPeopleSearch && searchTerm.Trim().Length < 4);
     private bool filterUnwatched = true;
     private bool filterPartial = true;
     private bool filterWatched = true;
@@ -378,6 +500,7 @@
         await ReadLastSelectedMediaAsync();
         bannerVisible = await ShouldShowZoomBannerAsync();
         await LoadLibraryAsync(lastSelectedMediaId);
+        await RunSearchAsync(1);
     }
 
     private async Task LoadLibraryAsync(Guid? preserveSelection = null)
@@ -447,7 +570,8 @@
             query = query.Where(m => !m.Hidden);
         }
 
-        filteredLibrary = query.OrderBy(m => m.Priority).ThenBy(m => m.Title).ToList();
+        filteredLibrary = query.ToList();
+        ApplyLibrarySorting();
         StateHasChanged();
     }
 
@@ -524,7 +648,8 @@
         {
             query = query.Where(e => !e.IsSpecial);
         }
-        filteredEpisodes = query.OrderBy(e => e.SeasonNumber).ThenBy(e => e.EpisodeNumber).ToList();
+        filteredEpisodes = query.ToList();
+        ApplyEpisodeSorting();
     }
 
     private void SelectEpisode(EpisodeDto episode)
@@ -533,14 +658,11 @@
         StateHasChanged();
     }
 
-    private async Task SelectSearchResultAsync(TmdbSearchResultDto result)
+    private async Task SelectSearchResultAsync(TmdbSearchItemDto result)
     {
-        if (isLoadingPreview)
-        {
-            return;
-        }
-
-        if (selectedSearchResult?.TmdbId == result.TmdbId && selectedSearchResult.MediaType == result.MediaType && searchPreviewDetail is not null)
+        if (selectedSearchResult?.Id == result.Id
+            && string.Equals(selectedSearchResult.MediaType, result.MediaType, StringComparison.OrdinalIgnoreCase)
+            && searchPreviewDetail is not null)
         {
             return;
         }
@@ -554,12 +676,34 @@
         selectedEpisode = null;
         episodes.Clear();
         filteredEpisodes.Clear();
+
+        previewCts?.Cancel();
+        previewCts?.Dispose();
+        previewCts = new CancellationTokenSource();
+        var localCts = previewCts;
+        var token = localCts.Token;
+
+        if (string.Equals(result.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+        {
+            localCts.Cancel();
+            localCts.Dispose();
+            previewCts = null;
+            previewFeedback = "People results are not available to import yet.";
+            await SafeStateHasChangedAsync();
+            return;
+        }
+
         isLoadingPreview = true;
-        await InvokeAsync(StateHasChanged);
+        await SafeStateHasChangedAsync();
 
         try
         {
-            var preview = await MediaService.GetTmdbPreviewAsync(result.TmdbId, result.MediaType, CancellationToken.None);
+            var preview = await MediaService.GetTmdbPreviewAsync(result.Id, result.MediaType, token);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
             if (preview is not null)
             {
                 searchPreviewDetail = preview;
@@ -569,14 +713,23 @@
                 previewFeedback = "Unable to load TMDB preview.";
             }
         }
+        catch (OperationCanceledException)
+        {
+            // ignored
+        }
         catch (Exception ex)
         {
             previewFeedback = $"Failed to load TMDB preview: {ex.Message}";
         }
         finally
         {
+            if (previewCts == localCts)
+            {
+                previewCts = null;
+            }
+            localCts.Dispose();
             isLoadingPreview = false;
-            await InvokeAsync(StateHasChanged);
+            await SafeStateHasChangedAsync();
         }
     }
 
@@ -587,16 +740,23 @@
             return;
         }
 
+        if (!TryParseMediaType(selectedSearchResult.MediaType, out var mediaType))
+        {
+            previewFeedback = "People results are not available to add yet.";
+            await SafeStateHasChangedAsync();
+            return;
+        }
+
         isAddingPreview = true;
         previewFeedback = null;
-        await InvokeAsync(StateHasChanged);
+        await SafeStateHasChangedAsync();
 
         try
         {
             var request = new ImportMediaRequest
             {
-                TmdbId = selectedSearchResult.TmdbId,
-                MediaType = selectedSearchResult.MediaType,
+                TmdbId = selectedSearchResult.Id,
+                MediaType = mediaType,
                 Priority = 3
             };
 
@@ -634,58 +794,484 @@
         finally
         {
             isAddingPreview = false;
-            await InvokeAsync(StateHasChanged);
+            await SafeStateHasChangedAsync();
         }
     }
 
-    private async Task SearchAsync()
+private Task TriggerImmediateSearch()
+{
+    if (IsSearchButtonDisabled)
     {
-        if (string.IsNullOrWhiteSpace(searchTerm))
+        if (IsPeopleSearch)
         {
-            searchFeedback = "Enter a search term.";
             searchResults.Clear();
+            totalSearchPages = 1;
+            totalSearchResults = 0;
+            searchServedFromCache = false;
+            searchFeedback = "Enter at least four characters to search people.";
+            SafeStateHasChanged();
+        }
+        return Task.CompletedTask;
+    }
+
+    currentSearchPage = 1;
+    return RunSearchAsync(1);
+}
+
+private async Task HandleSearchKeyDown(KeyboardEventArgs args)
+{
+    if (string.Equals(args.Key, "Enter", StringComparison.OrdinalIgnoreCase) && !IsSearchButtonDisabled)
+    {
+        currentSearchPage = 1;
+        await RunSearchAsync(1);
+    }
+}
+
+private bool IsSearchType(string value)
+    => string.Equals(searchType, value, StringComparison.OrdinalIgnoreCase);
+
+private void SetSearchType(string value)
+{
+    if (IsSearchType(value))
+    {
+        return;
+    }
+
+    searchType = value.ToLowerInvariant();
+    currentSearchPage = 1;
+    SafeStateHasChanged();
+
+    if (IsPeopleSearch)
+    {
+        var trimmed = searchTerm.Trim();
+        if (trimmed.Length < 4)
+        {
+            searchResults.Clear();
+            totalSearchPages = 1;
+            totalSearchResults = 0;
+            searchServedFromCache = false;
+            searchFeedback = "Enter at least four characters to search people.";
+            SafeStateHasChanged();
             return;
         }
 
-        isSearching = true;
-        searchFeedback = null;
-        try
+        _ = RunSearchAsync(1);
+    }
+    else
+    {
+        _ = RunSearchAsync(1);
+    }
+}
+
+private async Task RunSearchAsync(int page)
+{
+    var trimmed = searchTerm.Trim();
+    var normalizedType = NormalizeSearchType(searchType);
+    var isPerson = normalizedType == "person";
+
+    if (isPerson && trimmed.Length < 4)
+    {
+        isSearching = false;
+        searchResults.Clear();
+        totalSearchPages = 1;
+        totalSearchResults = 0;
+        searchServedFromCache = false;
+        searchFeedback = "Enter at least four characters to search people.";
+        await SafeStateHasChangedAsync();
+        return;
+    }
+
+    if (!isPerson && !string.IsNullOrWhiteSpace(trimmed) && trimmed.Length < 2)
+    {
+        isSearching = false;
+        searchResults.Clear();
+        totalSearchPages = 1;
+        totalSearchResults = 0;
+        searchServedFromCache = false;
+        searchFeedback = "Keep typing to search TMDB.";
+        await SafeStateHasChangedAsync();
+        return;
+    }
+
+    var requestVersion = ++searchRequestVersion;
+
+    activeSearchRequestCts?.Cancel();
+    activeSearchRequestCts?.Dispose();
+    var requestCts = new CancellationTokenSource();
+    activeSearchRequestCts = requestCts;
+
+    var targetPage = isPerson ? 1 : (page <= 0 ? 1 : page);
+    var cacheKey = BuildSearchCacheKey(trimmed, normalizedType, targetPage);
+
+    if (TryGetCachedSearch(cacheKey, out var cached))
+    {
+        ApplySearchResponse(cached with { ServedFromCache = true }, requestVersion);
+        isSearching = false;
+        await SafeStateHasChangedAsync();
+        if (activeSearchRequestCts == requestCts)
         {
-            var results = await MediaService.SearchTmdbAsync(searchTerm, CancellationToken.None);
-            searchResults = results
-                .Where(r => r.MediaType is MediaType.Movie or MediaType.TvShow)
-                .Take(25)
-                .ToList();
-            selectedSearchResult = null;
-            searchPreviewDetail = null;
-            previewFeedback = null;
-            isLoadingPreview = false;
-            isAddingPreview = false;
-            if (searchResults.Count == 0)
-            {
-                searchFeedback = $"No results for '{searchTerm}'.";
-            }
+            activeSearchRequestCts = null;
         }
-        catch (Exception ex)
+        requestCts.Dispose();
+        return;
+    }
+
+    isSearching = true;
+    searchFeedback = isPerson
+        ? "Searching people..."
+        : (string.IsNullOrWhiteSpace(trimmed) ? "Loading trending..." : "Searching TMDB...");
+    await SafeStateHasChangedAsync();
+
+    try
+    {
+        var response = await MediaService.SearchTmdbAsync(isPerson ? trimmed : trimmed, normalizedType, targetPage, requestCts.Token);
+        CacheSearch(cacheKey, response);
+        ApplySearchResponse(response, requestVersion);
+    }
+    catch (OperationCanceledException)
+    {
+        // intentionally ignored
+    }
+    catch (Exception ex)
+    {
+        if (requestVersion == searchRequestVersion)
         {
+            searchResults.Clear();
+            totalSearchPages = 1;
+            totalSearchResults = 0;
+            searchServedFromCache = false;
             searchFeedback = $"Search failed: {ex.Message}";
+            await SafeStateHasChangedAsync();
         }
-        finally
+    }
+    finally
+    {
+        if (activeSearchRequestCts == requestCts)
+        {
+            activeSearchRequestCts.Dispose();
+            activeSearchRequestCts = null;
+        }
+
+        if (requestVersion == searchRequestVersion)
         {
             isSearching = false;
+            await SafeStateHasChangedAsync();
+        }
+    }
+}
+
+    private void ApplySearchResponse(TmdbSearchResponseDto response, long requestVersion)
+    {
+        if (requestVersion != searchRequestVersion)
+        {
+            return;
+        }
+
+        var previousSelection = selectedSearchResult;
+        var previousPreview = searchPreviewDetail;
+
+        searchResults = response.Results
+            .Where(r => !string.Equals(r.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        currentSearchPage = response.Page;
+        totalSearchPages = Math.Max(1, response.TotalPages);
+        totalSearchResults = response.TotalResults;
+        searchServedFromCache = response.ServedFromCache;
+
+        if (previousSelection is not null)
+        {
+            var updatedSelection = searchResults.FirstOrDefault(r =>
+                r.Id == previousSelection.Id &&
+                string.Equals(r.MediaType, previousSelection.MediaType, StringComparison.OrdinalIgnoreCase));
+
+            if (updatedSelection is not null)
+            {
+                selectedSearchResult = updatedSelection;
+                searchPreviewDetail = previousPreview;
+            }
+            else
+            {
+                selectedSearchResult = null;
+                searchPreviewDetail = null;
+                previewFeedback = null;
+                isLoadingPreview = false;
+                isAddingPreview = false;
+            }
+        }
+        else
+        {
+            selectedSearchResult = null;
+            searchPreviewDetail = null;
+        }
+
+        ApplySearchSort();
+        searchFeedback = BuildSearchFeedback();
+        SafeStateHasChanged();
+    }
+
+    private string BuildSearchCacheKey(string query, string mediaTypeValue, int page)
+        => $"{mediaTypeValue}:{query.ToLowerInvariant()}:{page}";
+
+    private void CacheSearch(string key, TmdbSearchResponseDto response)
+    {
+        searchCache[key] = response with { ServedFromCache = false };
+
+        if (searchCacheOrder.Contains(key))
+        {
+            searchCacheOrder.Remove(key);
+        }
+        searchCacheOrder.AddLast(key);
+
+        while (searchCacheOrder.Count > SearchCacheLimit)
+        {
+            var oldest = searchCacheOrder.First?.Value;
+            if (oldest is null)
+            {
+                break;
+            }
+
+            searchCacheOrder.RemoveFirst();
+            searchCache.Remove(oldest);
         }
     }
 
-    private void ClearSearch()
+    private bool TryGetCachedSearch(string key, out TmdbSearchResponseDto response)
+    {
+        if (searchCache.TryGetValue(key, out var cached))
+        {
+            searchCacheOrder.Remove(key);
+            searchCacheOrder.AddLast(key);
+            response = cached;
+            return true;
+        }
+
+        response = TmdbSearchResponseDtoExtensions.Empty;
+        return false;
+    }
+
+    private string BuildSearchFeedback()
+    {
+        if (searchResults.Count == 0)
+        {
+            if (IsPeopleSearch)
+            {
+                return searchTerm.Trim().Length >= 4
+                    ? $"No matches for '{searchTerm}'."
+                    : "Enter at least four characters to search people.";
+            }
+
+            return string.IsNullOrWhiteSpace(searchTerm)
+                ? "No trending titles right now."
+                : $"No results for '{searchTerm}'.";
+        }
+
+        var cacheSuffix = searchServedFromCache ? " (cached)" : string.Empty;
+
+        if (IsPeopleSearch)
+        {
+            return $"Found {searchResults.Count} titles featuring \"{searchTerm}\"{cacheSuffix}";
+        }
+
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return $"Trending now — showing {searchResults.Count} titles{cacheSuffix}";
+        }
+
+        var pageInfo = totalSearchPages > 1 ? $" • page {currentSearchPage} of {totalSearchPages}" : string.Empty;
+        var totalInfo = totalSearchResults > 0
+            ? totalSearchResults.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)
+            : searchResults.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return $"Showing {totalInfo} results{pageInfo}{cacheSuffix}";
+    }
+
+    private bool CanGoToPreviousPage => currentSearchPage > 1;
+    private bool CanGoToNextPage => currentSearchPage < totalSearchPages;
+
+    private void GoToPreviousPage()
+    {
+        if (CanGoToPreviousPage)
+        {
+            _ = RunSearchAsync(currentSearchPage - 1);
+        }
+    }
+
+    private void GoToNextPage()
+    {
+        if (CanGoToNextPage)
+        {
+            _ = RunSearchAsync(currentSearchPage + 1);
+        }
+    }
+
+    private void SortLibrary(string column)
+    {
+        if (string.Equals(librarySortColumn, column, StringComparison.OrdinalIgnoreCase))
+        {
+            librarySortAscending = !librarySortAscending;
+        }
+        else
+        {
+            librarySortColumn = column;
+            librarySortAscending = true;
+        }
+
+        ApplyLibrarySorting();
+        StateHasChanged();
+    }
+
+    private void SortSearch(string column)
+    {
+        if (string.Equals(searchSortColumn, column, StringComparison.OrdinalIgnoreCase))
+        {
+            searchSortAscending = !searchSortAscending;
+        }
+        else
+        {
+            searchSortColumn = column;
+            searchSortAscending = true;
+        }
+
+        ApplySearchSort();
+        StateHasChanged();
+    }
+
+    private void SortEpisodes(string column)
+    {
+        if (string.Equals(episodeSortColumn, column, StringComparison.OrdinalIgnoreCase))
+        {
+            episodeSortAscending = !episodeSortAscending;
+        }
+        else
+        {
+            episodeSortColumn = column;
+            episodeSortAscending = true;
+        }
+
+        ApplyEpisodeSorting();
+        StateHasChanged();
+    }
+
+    private void ApplyLibrarySorting()
+    {
+        if (filteredLibrary.Count == 0)
+        {
+            return;
+        }
+
+        filteredLibrary = SortLibraryItems(filteredLibrary, librarySortColumn, librarySortAscending).ToList();
+    }
+
+    private static IEnumerable<MediaSummaryDto> SortLibraryItems(IEnumerable<MediaSummaryDto> items, string column, bool ascending)
+        => column switch
+        {
+            LibrarySortTitle => ascending
+                ? items.OrderBy(m => m.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(m => m.Title, StringComparer.OrdinalIgnoreCase),
+            LibrarySortType => ascending
+                ? items.OrderBy(m => m.MediaType).ThenBy(m => m.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(m => m.MediaType).ThenBy(m => m.Title, StringComparer.OrdinalIgnoreCase),
+            LibrarySortRelease => ascending
+                ? items.OrderBy(m => m.ReleaseDate ?? DateOnly.MaxValue).ThenBy(m => m.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(m => m.ReleaseDate ?? DateOnly.MinValue).ThenBy(m => m.Title, StringComparer.OrdinalIgnoreCase),
+            _ => ascending
+                ? items.OrderBy(m => m.Priority).ThenBy(m => m.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(m => m.Priority).ThenBy(m => m.Title, StringComparer.OrdinalIgnoreCase)
+        };
+
+    private void ApplySearchSort()
+    {
+        if (searchResults.Count == 0 || string.IsNullOrWhiteSpace(searchSortColumn))
+        {
+            return;
+        }
+
+        searchResults = SortSearchItems(searchResults, searchSortColumn!, searchSortAscending).ToList();
+    }
+
+    private static IEnumerable<TmdbSearchItemDto> SortSearchItems(IEnumerable<TmdbSearchItemDto> items, string column, bool ascending)
+        => column switch
+        {
+            SearchSortTitle => ascending
+                ? items.OrderBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(r => r.Title, StringComparer.OrdinalIgnoreCase),
+            SearchSortType => ascending
+                ? items
+                    .OrderBy(r => GetSearchTypeKey(r), StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                : items
+                    .OrderByDescending(r => GetSearchTypeKey(r), StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase),
+            SearchSortRelease => ascending
+                ? items.OrderBy(r => ParseReleaseDate(r.ReleaseDate) ?? DateOnly.MaxValue).ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(r => ParseReleaseDate(r.ReleaseDate) ?? DateOnly.MinValue).ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase),
+            SearchSortSource => ascending
+                ? items
+                    .OrderBy(r => string.IsNullOrWhiteSpace(r.Source))
+                    .ThenBy(r => r.Source ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+                : items
+                    .OrderBy(r => string.IsNullOrWhiteSpace(r.Source))
+                    .ThenByDescending(r => r.Source ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase),
+            _ => items
+        };
+
+    private void ApplyEpisodeSorting()
+    {
+        if (filteredEpisodes.Count == 0)
+        {
+            return;
+        }
+
+        filteredEpisodes = SortEpisodeItems(filteredEpisodes, episodeSortColumn, episodeSortAscending).ToList();
+    }
+
+    private static IEnumerable<EpisodeDto> SortEpisodeItems(IEnumerable<EpisodeDto> items, string column, bool ascending)
+        => column switch
+        {
+            EpisodeSortTitle => ascending
+                ? items.OrderBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(e => e.Title, StringComparer.OrdinalIgnoreCase),
+            EpisodeSortAirDate => ascending
+                ? items.OrderBy(e => e.AirDate ?? DateOnly.MaxValue).ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
+                : items.OrderByDescending(e => e.AirDate ?? DateOnly.MinValue).ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase),
+            _ => ascending
+                ? items.OrderBy(e => e.SeasonNumber).ThenBy(e => e.EpisodeNumber)
+                : items.OrderByDescending(e => e.SeasonNumber).ThenByDescending(e => e.EpisodeNumber)
+        };
+
+    private async Task ClearSearch()
     {
         searchTerm = string.Empty;
-        searchResults.Clear();
-        searchFeedback = null;
-        selectedSearchResult = null;
-        searchPreviewDetail = null;
-        previewFeedback = null;
-        isLoadingPreview = false;
-        isAddingPreview = false;
+        currentSearchPage = 1;
+        if (IsPeopleSearch)
+        {
+            searchResults.Clear();
+            totalSearchPages = 1;
+            totalSearchResults = 0;
+            searchServedFromCache = false;
+            searchFeedback = "Enter at least four characters to search people.";
+            SafeStateHasChanged();
+            return;
+        }
+
+        await RunSearchAsync(1);
+    }
+
+    private async Task SearchByPersonAsync(string name)
+    {
+        var trimmed = name.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return;
+        }
+
+        searchType = SearchScopePeople;
+        searchTerm = trimmed;
+        currentSearchPage = 1;
+        SafeStateHasChanged();
+
+        await RunSearchAsync(1);
     }
 
     private void UpsertSummary(MediaDetailDto detail)
@@ -923,8 +1509,59 @@
     private string BuildPosterUrl(string path) => string.IsNullOrWhiteSpace(path) ? string.Empty : $"{PosterBaseUrl}{path}";
 
     private static string FormatDate(DateOnly? date) => date?.ToString("MMM dd, yyyy") ?? "Date TBD";
-    private static string FormatRelease(string? date) => string.IsNullOrWhiteSpace(date) ? "Date TBD" : date;
-    private static string FormatSource(string? source) => string.IsNullOrWhiteSpace(source) ? "Unknown" : source;
+    private static string FormatRelease(string? date)
+    {
+        if (string.IsNullOrWhiteSpace(date))
+        {
+            return "Date TBD";
+        }
+
+        return DateTime.TryParse(date, out var parsed)
+            ? parsed.ToString("yyyy", System.Globalization.CultureInfo.InvariantCulture)
+            : date;
+    }
+
+    private static DateOnly? ParseReleaseDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return DateOnly.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static string FormatSearchType(TmdbSearchItemDto result)
+        => GetSearchTypeKey(result);
+
+    private static string GetSearchTypeKey(TmdbSearchItemDto item)
+    {
+        if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Show";
+        }
+
+        if (string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Movie";
+        }
+
+        if (string.IsNullOrWhiteSpace(item.MediaType))
+        {
+            return "Unknown";
+        }
+
+        return item.MediaType.ToUpperInvariant();
+    }
+
+    private static string FormatSource(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "-" : value!;
+
+    private static string? BuildSortIndicator(string? activeColumn, string column, bool ascending)
+        => string.Equals(activeColumn, column, StringComparison.OrdinalIgnoreCase)
+            ? (ascending ? "^" : "v")
+            : null;
+
     private static string FormatList(IEnumerable<string> values) => !values.Any() ? "Unknown" : string.Join(", ", values);
 
     private static string FormatEpisodeCode(EpisodeDto episode)
@@ -952,12 +1589,16 @@
         return string.Join(' ', classes);
     }
 
-    private string BuildSearchRowClasses(TmdbSearchResultDto result, bool isSelected)
+    private string BuildSearchRowClasses(TmdbSearchItemDto result, bool isSelected)
     {
         var classes = new List<string> { "state-pill" };
         if (isSelected)
         {
             classes.Add("row-selected");
+        }
+        if (string.Equals(result.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+        {
+            classes.Add("row-person");
         }
         return string.Join(' ', classes);
     }
@@ -980,5 +1621,62 @@
             classes.Add("row-selected");
         }
         return string.Join(' ', classes);
+    }
+
+    private static string NormalizeSearchType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "multi";
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "movie" => "movie",
+            "tv" or "tvshow" or "television" => "tv",
+            "media" => "multi",
+            "person" => "person",
+            _ => "multi"
+        };
+    }
+
+    private static bool TryParseMediaType(string mediaType, out MediaType result)
+    {
+        var normalized = mediaType.Trim().ToLowerInvariant();
+        switch (normalized)
+        {
+            case "movie":
+                result = MediaType.Movie;
+                return true;
+            case "tv":
+                result = MediaType.TvShow;
+                return true;
+            default:
+                result = MediaType.Movie;
+                return false;
+        }
+    }
+
+    public void Dispose()
+    {
+        activeSearchRequestCts?.Cancel();
+        activeSearchRequestCts?.Dispose();
+        previewCts?.Cancel();
+        previewCts?.Dispose();
+        isDisposed = true;
+    }
+
+    private Task SafeStateHasChangedAsync()
+    {
+        return isDisposed ? Task.CompletedTask : InvokeAsync(StateHasChanged);
+    }
+
+    private void SafeStateHasChanged()
+    {
+        if (!isDisposed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
     }
 }

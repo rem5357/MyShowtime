@@ -171,4 +171,19 @@ public record TmdbTvDetails
 
     [JsonPropertyName("seasons")]
     public IReadOnlyList<TmdbSeasonInfo> Seasons { get; init; } = Array.Empty<TmdbSeasonInfo>();
+
+    [JsonPropertyName("networks")]
+    public IReadOnlyList<TmdbNetwork> Networks { get; init; } = Array.Empty<TmdbNetwork>();
+}
+
+public record TmdbNetwork
+{
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
+
+    [JsonPropertyName("origin_country")]
+    public string? OriginCountry { get; init; }
 }

@@ -43,6 +43,8 @@
   - API binaries deployed to `/var/www/projects/MyShowtime/api/`.
   - Nginx snippet: `/etc/nginx/snippets/projects/MyShowtime.conf`.
 - After redeploying, perform a hard refresh in the browser (service worker caching can hold stale assets).
+- Use `scripts/build_and_deploy.sh` for production builds. It auto-increments `BuildInfo.BuildNumber`, publishes the API and client, and rsyncs outputs into `/var/www/projects/MyShowtime/api/` and `/var/www/projects/MyShowtime/wwwroot/`—run it for every build so the on-screen build badge stays in sync with deployments.
+- When the user asks to review a screenshot, always open the most recent file located in `/home/mithroll/Dropbox/Screenshots/`.
 
 ## Lessons Learned (Today)
 - Publishing straight to `/var/www/projects/MyShowtime/wwwroot` right after `dotnet publish -c Release src/MyShowtime.Client` ensures UI tweaks (like the header rename) land without stale cached bundles.
