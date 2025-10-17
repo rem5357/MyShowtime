@@ -23,9 +23,6 @@ using MyShowtime.Shared.Requests;
 using Polly;
 using Polly.Retry;
 
-// TODO: Replace with actual user authentication
-const int TEMP_USER_ID = 101;
-
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
@@ -33,6 +30,10 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddProblemDetails();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 builder.Services.AddMemoryCache(options => options.SizeLimit = 200);
+
+// Register HTTP context accessor and current user service
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
 builder.Services.Configure<TmdbOptions>(builder.Configuration.GetSection(TmdbOptions.SectionName));
 
@@ -376,23 +377,29 @@ static async Task<TmdbSearchResponseDto> BuildPeopleSearchResponseAsync(string q
     }
 }
 
-app.MapGet("/api/media", async ([FromQuery] bool? includeHidden, ApplicationDbContext db, CancellationToken cancellationToken) =>
+app.MapGet("/api/media", async ([FromQuery] bool? includeHidden, ApplicationDbContext db, ICurrentUserService currentUser, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
     var includeHiddenValue = includeHidden ?? false;
+    var userId = currentUser.GetRequiredUserId();
+
+    // Debug logging
+    logger.LogInformation("GET /api/media - User ID from header: {UserId}", userId);
 
     var query = from media in db.Media.AsNoTracking()
                 join userMedia in db.UserMedia on media.Id equals userMedia.MediaId into userMediaGroup
-                from um in userMediaGroup.Where(um => um.UserId == TEMP_USER_ID).DefaultIfEmpty()
-                where includeHiddenValue || um == null || !um.Hidden
-                orderby um != null ? um.Priority : 3, media.Title
+                from um in userMediaGroup.Where(um => um.UserId == userId).DefaultIfEmpty()
+                where um != null && (includeHiddenValue || !um.Hidden)
+                orderby um.Priority, media.Title
                 select new { Media = media, UserMedia = um };
 
     var items = await query.ToListAsync(cancellationToken);
 
+    logger.LogInformation("GET /api/media - Returning {Count} items for user {UserId}", items.Count, userId);
+
     return Results.Ok(items.Select(x => x.Media.ToSummaryDto(x.UserMedia)));
 });
 
-app.MapGet("/api/media/{id:guid}", async (Guid id, ApplicationDbContext db, CancellationToken cancellationToken) =>
+app.MapGet("/api/media/{id:guid}", async (Guid id, ApplicationDbContext db, ICurrentUserService currentUser, CancellationToken cancellationToken) =>
 {
     var media = await db.Media.AsNoTracking().FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
     if (media is null)
@@ -400,17 +407,19 @@ app.MapGet("/api/media/{id:guid}", async (Guid id, ApplicationDbContext db, Canc
         return Results.NotFound();
     }
 
+    var userId = currentUser.GetRequiredUserId();
     var userMedia = await db.UserMedia.AsNoTracking()
-        .FirstOrDefaultAsync(um => um.MediaId == id && um.UserId == TEMP_USER_ID, cancellationToken);
+        .FirstOrDefaultAsync(um => um.MediaId == id && um.UserId == userId, cancellationToken);
 
     return Results.Ok(media.ToDetailDto(userMedia));
 });
 
-app.MapGet("/api/media/{id:guid}/episodes", async (Guid id, ApplicationDbContext db, CancellationToken cancellationToken) =>
+app.MapGet("/api/media/{id:guid}/episodes", async (Guid id, ApplicationDbContext db, ICurrentUserService currentUser, CancellationToken cancellationToken) =>
 {
+    var userId = currentUser.GetRequiredUserId();
     var query = from episode in db.Episodes.AsNoTracking().Where(e => e.MediaId == id)
                 join userEpisode in db.UserEpisodes on episode.Id equals userEpisode.EpisodeId into userEpisodeGroup
-                from ue in userEpisodeGroup.Where(ue => ue.UserId == TEMP_USER_ID).DefaultIfEmpty()
+                from ue in userEpisodeGroup.Where(ue => ue.UserId == userId).DefaultIfEmpty()
                 orderby episode.SeasonNumber, episode.EpisodeNumber
                 select new { Episode = episode, UserEpisode = ue };
 
@@ -419,7 +428,7 @@ app.MapGet("/api/media/{id:guid}/episodes", async (Guid id, ApplicationDbContext
     return Results.Ok(items.Select(x => x.Episode.ToDto(x.UserEpisode)));
 });
 
-app.MapPost("/api/media/import", async ([FromBody] ImportMediaRequest request, ApplicationDbContext db, ITmdbClient tmdbClient, CancellationToken cancellationToken) =>
+app.MapPost("/api/media/import", async ([FromBody] ImportMediaRequest request, ApplicationDbContext db, ITmdbClient tmdbClient, ICurrentUserService currentUser, CancellationToken cancellationToken) =>
 {
     var validationResults = new List<ValidationResult>();
     var validationContext = new ValidationContext(request);
@@ -431,6 +440,7 @@ app.MapPost("/api/media/import", async ([FromBody] ImportMediaRequest request, A
         return Results.ValidationProblem(errors);
     }
 
+    var userId = currentUser.GetRequiredUserId();
     var existing = await db.Media.FirstOrDefaultAsync(m => m.TmdbId == request.TmdbId, cancellationToken);
     var now = DateTime.UtcNow;
 
@@ -477,12 +487,12 @@ app.MapPost("/api/media/import", async ([FromBody] ImportMediaRequest request, A
         await db.SaveChangesAsync(cancellationToken);
 
         // Create or update UserMedia record
-        var userMedia = await db.UserMedia.FirstOrDefaultAsync(um => um.MediaId == entity.Id && um.UserId == TEMP_USER_ID, cancellationToken);
+        var userMedia = await db.UserMedia.FirstOrDefaultAsync(um => um.MediaId == entity.Id && um.UserId == userId, cancellationToken);
         if (userMedia is null)
         {
             userMedia = new UserMedia
             {
-                UserId = TEMP_USER_ID,
+                UserId = userId,
                 MediaId = entity.Id,
                 Priority = request.Priority ?? 3,
                 CreatedAt = now,
@@ -509,7 +519,7 @@ app.MapPost("/api/media/import", async ([FromBody] ImportMediaRequest request, A
     }
 });
 
-app.MapPost("/api/media/{id:guid}/sync", async (Guid id, ApplicationDbContext db, ITmdbClient tmdbClient, CancellationToken cancellationToken) =>
+app.MapPost("/api/media/{id:guid}/sync", async (Guid id, ApplicationDbContext db, ITmdbClient tmdbClient, ICurrentUserService currentUser, CancellationToken cancellationToken) =>
 {
     var entity = await db.Media.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
     if (entity is null)
@@ -517,6 +527,7 @@ app.MapPost("/api/media/{id:guid}/sync", async (Guid id, ApplicationDbContext db
         return Results.NotFound();
     }
 
+    var userId = currentUser.GetRequiredUserId();
     var now = DateTime.UtcNow;
 
     try
@@ -546,7 +557,7 @@ app.MapPost("/api/media/{id:guid}/sync", async (Guid id, ApplicationDbContext db
 
         // Load UserMedia to include in response
         var userMedia = await db.UserMedia.AsNoTracking()
-            .FirstOrDefaultAsync(um => um.MediaId == entity.Id && um.UserId == TEMP_USER_ID, cancellationToken);
+            .FirstOrDefaultAsync(um => um.MediaId == entity.Id && um.UserId == userId, cancellationToken);
 
         return Results.Ok(entity.ToDetailDto(userMedia));
     }
@@ -560,7 +571,7 @@ app.MapPost("/api/media/{id:guid}/sync", async (Guid id, ApplicationDbContext db
     }
 });
 
-app.MapPut("/api/media/{id:guid}", async (Guid id, [FromBody] UpdateMediaRequest request, ApplicationDbContext db, CancellationToken cancellationToken) =>
+app.MapPut("/api/media/{id:guid}", async (Guid id, [FromBody] UpdateMediaRequest request, ApplicationDbContext db, ICurrentUserService currentUser, CancellationToken cancellationToken) =>
 {
     var validationResults = new List<ValidationResult>();
     var validationContext = new ValidationContext(request);
@@ -578,15 +589,16 @@ app.MapPut("/api/media/{id:guid}", async (Guid id, [FromBody] UpdateMediaRequest
         return Results.NotFound();
     }
 
+    var userId = currentUser.GetRequiredUserId();
     var now = DateTime.UtcNow;
 
     // Get or create UserMedia record
-    var userMedia = await db.UserMedia.FirstOrDefaultAsync(um => um.MediaId == id && um.UserId == TEMP_USER_ID, cancellationToken);
+    var userMedia = await db.UserMedia.FirstOrDefaultAsync(um => um.MediaId == id && um.UserId == userId, cancellationToken);
     if (userMedia is null)
     {
         userMedia = new UserMedia
         {
-            UserId = TEMP_USER_ID,
+            UserId = userId,
             MediaId = id,
             Priority = request.Priority,
             WatchState = request.WatchState,
@@ -614,7 +626,7 @@ app.MapPut("/api/media/{id:guid}", async (Guid id, [FromBody] UpdateMediaRequest
     return Results.Ok(media.ToDetailDto(userMedia));
 });
 
-app.MapPut("/api/media/{mediaId:guid}/episodes/bulk", async (Guid mediaId, [FromBody] BulkUpdateEpisodesRequest request, ApplicationDbContext db, CancellationToken cancellationToken) =>
+app.MapPut("/api/media/{mediaId:guid}/episodes/bulk", async (Guid mediaId, [FromBody] BulkUpdateEpisodesRequest request, ApplicationDbContext db, ICurrentUserService currentUser, CancellationToken cancellationToken) =>
 {
     var validationResults = new List<ValidationResult>();
     var validationContext = new ValidationContext(request);
@@ -640,12 +652,13 @@ app.MapPut("/api/media/{mediaId:guid}/episodes/bulk", async (Guid mediaId, [From
         return Results.NotFound();
     }
 
+    var userId = currentUser.GetRequiredUserId();
     var now = DateTime.UtcNow;
     var episodeIds = episodes.Select(e => e.Id).ToList();
 
     // Get or create UserEpisode records for each episode
     var existingUserEpisodes = await db.UserEpisodes
-        .Where(ue => episodeIds.Contains(ue.EpisodeId) && ue.UserId == TEMP_USER_ID)
+        .Where(ue => episodeIds.Contains(ue.EpisodeId) && ue.UserId == userId)
         .ToListAsync(cancellationToken);
 
     var existingEpisodeIds = existingUserEpisodes.Select(ue => ue.EpisodeId).ToHashSet();
@@ -657,7 +670,7 @@ app.MapPut("/api/media/{mediaId:guid}/episodes/bulk", async (Guid mediaId, [From
         {
             newUserEpisodes.Add(new UserEpisode
             {
-                UserId = TEMP_USER_ID,
+                UserId = userId,
                 EpisodeId = episodeId,
                 WatchState = request.WatchState,
                 CreatedAt = now,
@@ -684,7 +697,7 @@ app.MapPut("/api/media/{mediaId:guid}/episodes/bulk", async (Guid mediaId, [From
     return Results.Ok(new { updatedCount = episodes.Count });
 });
 
-app.MapPut("/api/media/{mediaId:guid}/episodes/{episodeId:guid}/viewstate", async (Guid mediaId, Guid episodeId, [FromBody] UpdateEpisodeViewStateRequest request, ApplicationDbContext db, CancellationToken cancellationToken) =>
+app.MapPut("/api/media/{mediaId:guid}/episodes/{episodeId:guid}/viewstate", async (Guid mediaId, Guid episodeId, [FromBody] UpdateEpisodeViewStateRequest request, ApplicationDbContext db, ICurrentUserService currentUser, CancellationToken cancellationToken) =>
 {
     var episode = await db.Episodes.AsNoTracking().FirstOrDefaultAsync(e => e.Id == episodeId && e.MediaId == mediaId, cancellationToken);
     if (episode is null)
@@ -692,15 +705,16 @@ app.MapPut("/api/media/{mediaId:guid}/episodes/{episodeId:guid}/viewstate", asyn
         return Results.NotFound();
     }
 
+    var userId = currentUser.GetRequiredUserId();
     var now = DateTime.UtcNow;
 
     // Get or create UserEpisode record
-    var userEpisode = await db.UserEpisodes.FirstOrDefaultAsync(ue => ue.EpisodeId == episodeId && ue.UserId == TEMP_USER_ID, cancellationToken);
+    var userEpisode = await db.UserEpisodes.FirstOrDefaultAsync(ue => ue.EpisodeId == episodeId && ue.UserId == userId, cancellationToken);
     if (userEpisode is null)
     {
         userEpisode = new UserEpisode
         {
-            UserId = TEMP_USER_ID,
+            UserId = userId,
             EpisodeId = episodeId,
             WatchState = request.WatchState,
             CreatedAt = now,

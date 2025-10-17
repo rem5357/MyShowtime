@@ -103,17 +103,36 @@ All endpoints use `/api/` prefix:
 ### Core Entities
 
 **Media** (`src/MyShowtime.Api/Entities/Media.cs`):
-- Stores movies and TV shows with TMDB metadata
+- Stores movies and TV shows with TMDB metadata (shared across all users)
 - One-to-many relationship with Episodes
 - Unique constraint on `TmdbId`
-- Tracks priority (0-10), watch state, hidden status, notes, source
 - Genres and Cast stored as JSON-backed text fields
 
 **Episode** (`src/MyShowtime.Api/Entities/Episode.cs`):
-- TV show episodes with season/episode numbers
+- TV show episodes with season/episode numbers (shared across all users)
 - Foreign key to Media
 - Unique constraint on `MediaId + SeasonNumber + EpisodeNumber`
-- Tracks watch state per episode
+
+**AppUser** (`src/MyShowtime.Api/Entities/AppUser.cs`):
+- User account information
+- Primary key `Id` (integer), unique `CognitoSub` (Guid)
+- Stores email, name, roles, metadata (JSONB)
+
+**UserMedia** (`src/MyShowtime.Api/Entities/UserMedia.cs`):
+- Junction table for user-specific media tracking
+- Composite unique constraint on `UserId + MediaId`
+- Stores user-specific: WatchState, Priority, Hidden, Notes, Source, AvailableOn
+- Foreign keys to AppUser and Media (cascade delete)
+
+**UserEpisode** (`src/MyShowtime.Api/Entities/UserEpisode.cs`):
+- Junction table for user-specific episode watch states
+- Composite unique constraint on `UserId + EpisodeId`
+- Stores per-user episode WatchState
+- Foreign keys to AppUser and Episode (cascade delete)
+
+**UserSettings** (`src/MyShowtime.Api/Entities/UserSettings.cs`):
+- One-to-one with AppUser (unique constraint on UserId)
+- Stores LastSelectedMediaId and Preferences (JSONB)
 
 ### Key DTOs
 
@@ -173,13 +192,19 @@ Located in `src/MyShowtime.Client/Pages/Home.razor` (~1500 lines):
 
 ### Database Schema
 
-Two migrations applied:
+Four migrations applied:
 1. `InitialCreate` - Initial schema
 2. `CreateMediaSchema` - Media and Episodes tables with constraints
+3. `AddAppUserTable` - AppUser table for user accounts
+4. `AddMultiUserArchitecture` - UserMedia, UserEpisode, UserSettings tables; migrated existing data to user 101
 
 **Unique Constraints**:
 - Media: `TmdbId` must be unique
 - Episodes: `MediaId + SeasonNumber + EpisodeNumber` must be unique
+- AppUser: `CognitoSub` must be unique
+- UserMedia: `UserId + MediaId` must be unique (composite)
+- UserEpisode: `UserId + EpisodeId` must be unique (composite)
+- UserSettings: `UserId` must be unique (one-to-one with AppUser)
 
 ### TMDB Import Flow
 
@@ -257,8 +282,8 @@ Preserve `/etc/nginx/snippets/projects/MyShowtime.conf` (rewrites + proxy) whene
 - Secrets stored in environment file (rotation recommended)
 - Sequential TMDB imports for seasons (potential performance bottleneck)
 - Watch provider lookup adds per-result latency
-- No multi-user support
 - UI font sizing needs refinement
+- Multi-user authentication uses simple X-User-Id header (not production-ready; needs JWT/OAuth)
 
 ## Suggested Improvements
 
@@ -266,10 +291,10 @@ When working on enhancements:
 
 1. **Advanced WPF features** still pending: person/crew search mode, streaming availability editing, richer relationship views
 2. **Testing**: Add unit tests for services, integration tests for API endpoints, E2E tests for critical workflows
-3. **Security**: Enable HTTPS, rotate credentials, implement proper secret management
+3. **Security**: Enable HTTPS, rotate credentials, implement proper secret management, upgrade to JWT/OAuth authentication
 4. **Performance**: Consider caching/batching watch provider lookups, parallel TMDB requests for seasons
 5. **User Experience**: Refine font sizing, improve mobile responsiveness
-6. **Multi-user**: Add authentication and per-user library separation when needed
+6. **Authentication**: Upgrade from header-based auth to JWT bearer tokens with proper validation and expiration
 
 ## Code Style & Conventions
 
@@ -307,6 +332,92 @@ When working on enhancements:
 ### Performance Optimization
 
 - **Watch Provider Enrichment**: Use parallel async processing with `Task.WhenAll()` for enriching search results with streaming provider data. The semaphore limits concurrent TMDB calls (3) while allowing multiple items to be processed simultaneously. **Never use sequential `foreach` loops with `await` inside** - this creates bottlenecks and timeouts.
+
+### Multi-User Authentication (v0.65)
+
+**Architecture**: The multi-user system uses a **shared media catalog** with **per-user tracking data**:
+- `Media` and `Episodes` tables store TMDB data (shared across all users)
+- `UserMedia` and `UserEpisode` junction tables store user-specific data (watch states, priorities, notes)
+- Each user sees the same media catalog but with their own personal tracking information
+
+**Client-Side Implementation**:
+1. **User Selection**: Login page (`Login.razor`) fetches users from `/api/users` and stores selected user in localStorage
+2. **UserStateService**: Singleton service maintains current user state across the app
+3. **AuthenticatedHttpMessageHandler**: Custom `DelegatingHandler` that automatically adds `X-User-Id` header to all outgoing HTTP requests
+4. **HttpClient Setup**: Configured with the custom handler in `Program.cs` to inject user context into every API call
+
+**Server-Side Implementation**:
+1. **CurrentUserService**: Scoped service that extracts user ID from the `X-User-Id` request header
+2. **IHttpContextAccessor**: Registered to provide access to the current HTTP context
+3. **Dependency Injection**: All API endpoints inject `ICurrentUserService` to get the authenticated user ID
+4. **Query Filtering**: Every database query filters by the current user's ID to ensure data isolation
+
+**Critical Lessons Learned**:
+
+1. **Query Logic Bug** (THE KEY ISSUE):
+   - **Wrong**: `where includeHiddenValue || um == null || !um.Hidden`
+   - This incorrectly showed ALL media to users with no UserMedia records (`um == null` matched everything)
+   - **Correct**: `where um != null && (includeHiddenValue || !um.Hidden)`
+   - Only show media that the user has explicitly added to their library
+
+2. **Header Transmission**:
+   - Use `DelegatingHandler` to automatically add headers to all requests
+   - Don't manually add headers in each service method (error-prone and repetitive)
+   - The handler wraps the `HttpClient` and intercepts all requests
+
+3. **Service Scoping**:
+   - `UserStateService` is **Singleton** (persists across app lifetime)
+   - `CurrentUserService` is **Scoped** (per-request lifetime)
+   - `AuthenticatedHttpMessageHandler` is **Scoped** (can inject scoped services)
+   - `HttpClient` is **Scoped** (new instance per scope with the handler)
+
+4. **User Context Extraction**:
+   - Always use `ICurrentUserService.GetRequiredUserId()` in endpoints
+   - Never hardcode user IDs (removed `const int TEMP_USER_ID = 101`)
+   - Add comprehensive logging to debug header transmission issues
+
+5. **Database Schema Design**:
+   - Junction tables (`UserMedia`, `UserEpisode`) enable many-to-many relationships
+   - Composite unique constraints (`UserId + MediaId`) prevent duplicate tracking
+   - Cascade deletes ensure referential integrity
+   - Separate shared data (Media/Episodes) from user data (UserMedia/UserEpisode)
+
+6. **Testing Multi-User Isolation**:
+   - Query the database directly to verify data distribution: `SELECT user_id, COUNT(*) FROM user_media GROUP BY user_id`
+   - Test API endpoints with different `X-User-Id` headers: `curl -H "X-User-Id: 102" http://localhost:5000/api/media`
+   - Check logs for "User ID from header" messages to confirm proper extraction
+   - Verify SQL queries use `@__userId_0` parameter (not hardcoded values)
+
+7. **Debugging Tips**:
+   - Add debug logging in `CurrentUserService` to log all headers and user ID extraction
+   - Add debug logging in endpoints to confirm which user ID is being used
+   - Use `journalctl` to view API logs: `sudo journalctl -u myshowtime-api.service -n 50`
+   - Check for EF Core SQL queries to see the actual parameter values
+
+**Current Implementation Status**:
+- ✅ Database schema supports full multi-user isolation
+- ✅ User selection UI with login page
+- ✅ Client-side user context passed via HTTP headers
+- ✅ Server-side user context extraction and validation
+- ✅ All API endpoints filter by current user
+- ⚠️ Uses simple header-based auth (not production-ready)
+- ❌ No JWT/OAuth token validation
+- ❌ No session management or token expiration
+
+**Next Steps for Production**:
+1. Replace `X-User-Id` header with JWT bearer tokens
+2. Add authentication middleware to validate tokens
+3. Extract user claims from JWT instead of header
+4. Implement token refresh and expiration
+5. Add authorization policies for role-based access
+6. Consider AWS Cognito integration (CognitoSub field already exists)
+
+**Files to Reference**:
+- See `DatabaseSchema.md` for complete database schema documentation
+- Client: `src/MyShowtime.Client/Services/AuthenticatedHttpMessageHandler.cs`
+- Client: `src/MyShowtime.Client/Services/UserStateService.cs`
+- API: `src/MyShowtime.Api/Services/CurrentUserService.cs`
+- API: `src/MyShowtime.Api/Program.cs` (all endpoint implementations)
 
 ### Blazor Error UI
 
