@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using MyShowtime.Shared.Dtos;
 using MyShowtime.Shared.Enums;
@@ -67,6 +68,17 @@ public class MediaLibraryService(HttpClient httpClient)
         return await response.Content.ReadFromJsonAsync<MediaDetailDto>(cancellationToken: cancellationToken);
     }
 
+    public async Task<bool> BulkUpdateEpisodesAsync(Guid mediaId, ViewState state, bool excludeSpecials, CancellationToken cancellationToken = default)
+    {
+        var payload = new BulkUpdateEpisodesRequest
+        {
+            WatchState = state,
+            ExcludeSpecials = excludeSpecials
+        };
+        var response = await _httpClient.PutAsJsonAsync($"api/media/{mediaId}/episodes/bulk", payload, cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task<EpisodeDto?> UpdateEpisodeViewStateAsync(Guid mediaId, Guid episodeId, ViewState state, CancellationToken cancellationToken = default)
     {
         var payload = new UpdateEpisodeViewStateRequest { WatchState = state };
@@ -79,29 +91,53 @@ public class MediaLibraryService(HttpClient httpClient)
         return await response.Content.ReadFromJsonAsync<EpisodeDto>(cancellationToken: cancellationToken);
     }
 
-    public async Task<IReadOnlyList<TmdbSearchResultDto>> SearchTmdbAsync(string searchTerm, CancellationToken cancellationToken = default)
+    public async Task<TmdbSearchResponseDto> SearchTmdbAsync(string? searchTerm, string? mediaType = null, int page = 1, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(searchTerm))
+        var normalizedPage = page <= 0 ? 1 : page;
+        var queryParameters = new List<string> { $"page={normalizedPage}" };
+
+        var sanitizedType = string.IsNullOrWhiteSpace(mediaType) ? null : mediaType.Trim();
+        if (!string.IsNullOrWhiteSpace(sanitizedType))
         {
-            return Array.Empty<TmdbSearchResultDto>();
+            queryParameters.Add($"type={Uri.EscapeDataString(sanitizedType)}");
         }
 
-        var response = await _httpClient.GetAsync($"api/search?query={Uri.EscapeDataString(searchTerm.Trim())}", cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        var trimmedQuery = searchTerm?.Trim();
+        if (!string.IsNullOrWhiteSpace(trimmedQuery))
         {
-            return Array.Empty<TmdbSearchResultDto>();
+            queryParameters.Add($"q={Uri.EscapeDataString(trimmedQuery)}");
         }
 
-        var payload = await response.Content.ReadFromJsonAsync<List<TmdbSearchResultDto>>(cancellationToken: cancellationToken);
-        return payload ?? new List<TmdbSearchResultDto>();
+        var path = queryParameters.Count > 0
+            ? $"api/tmdb/search?{string.Join("&", queryParameters)}"
+            : "api/tmdb/search";
+
+        var response = await _httpClient.GetAsync(path, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            return TmdbSearchResponseDtoExtensions.Empty;
+        }
+        response.EnsureSuccessStatusCode();
+
+        var payload = await response.Content.ReadFromJsonAsync<TmdbSearchResponseDto>(cancellationToken: cancellationToken);
+        return payload ?? TmdbSearchResponseDtoExtensions.Empty;
     }
 
-    public async Task<MediaDetailDto?> GetTmdbPreviewAsync(int tmdbId, MediaType mediaType, CancellationToken cancellationToken = default)
+    public async Task<MediaDetailDto?> GetTmdbPreviewAsync(int tmdbId, string mediaType, CancellationToken cancellationToken = default)
     {
-        var url = $"api/search/preview?tmdbId={tmdbId}&mediaType={Uri.EscapeDataString(mediaType.ToString())}";
+        if (tmdbId <= 0)
+        {
+            return null;
+        }
+
+        var url = $"api/tmdb/details?tmdbId={tmdbId}&mediaType={Uri.EscapeDataString(mediaType)}";
         var response = await _httpClient.GetAsync(url, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
+            if (response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                return null;
+            }
             return null;
         }
 

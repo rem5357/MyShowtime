@@ -11,7 +11,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 18px 24px;
+    padding: 8px 24px 6px;
     background: rgba(31, 31, 31, 0.85);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     backdrop-filter: blur(14px);
@@ -20,7 +20,7 @@
 .brand {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 0;
 }
 
 .brand-title {
@@ -31,13 +31,18 @@
 
 .header-actions {
     display: flex;
-    align-items: center;
-    gap: 16px;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.header-build {
+    margin-left: 0;
+    align-self: auto;
 }
 
 .app-content {
     flex: 1;
-    padding: 24px;
 }
 
 @media (max-width: 768px) {
@@ -50,5 +55,7 @@
     .header-actions {
         width: 100%;
         justify-content: space-between;
+        flex-direction: row;
+        align-items: center;
     }
 }

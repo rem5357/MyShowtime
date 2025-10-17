@@ -540,6 +540,44 @@ app.MapPut("/api/media/{id:guid}", async (Guid id, [FromBody] UpdateMediaRequest
     return Results.Ok(entity.ToDetailDto());
 });
 
+app.MapPut("/api/media/{mediaId:guid}/episodes/bulk", async (Guid mediaId, [FromBody] BulkUpdateEpisodesRequest request, ApplicationDbContext db, CancellationToken cancellationToken) =>
+{
+    var validationResults = new List<ValidationResult>();
+    var validationContext = new ValidationContext(request);
+    if (!Validator.TryValidateObject(request, validationContext, validationResults, true))
+    {
+        var errors = validationResults
+            .GroupBy(r => r.MemberNames.FirstOrDefault() ?? string.Empty, r => r.ErrorMessage ?? string.Empty)
+            .ToDictionary(g => g.Key, g => g.ToArray());
+        return Results.ValidationProblem(errors);
+    }
+
+    var query = db.Episodes.Where(e => e.MediaId == mediaId);
+
+    if (request.ExcludeSpecials)
+    {
+        query = query.Where(e => e.SeasonNumber >= 1);
+    }
+
+    var episodes = await query.ToListAsync(cancellationToken);
+
+    if (episodes.Count == 0)
+    {
+        return Results.NotFound();
+    }
+
+    var now = DateTime.UtcNow;
+    foreach (var episode in episodes)
+    {
+        episode.WatchState = request.WatchState;
+        episode.UpdatedAtUtc = now;
+    }
+
+    await db.SaveChangesAsync(cancellationToken);
+
+    return Results.Ok(new { updatedCount = episodes.Count });
+});
+
 app.MapPut("/api/media/{mediaId:guid}/episodes/{episodeId:guid}/viewstate", async (Guid mediaId, Guid episodeId, [FromBody] UpdateEpisodeViewStateRequest request, ApplicationDbContext db, CancellationToken cancellationToken) =>
 {
     var episode = await db.Episodes.FirstOrDefaultAsync(e => e.Id == episodeId && e.MediaId == mediaId, cancellationToken);

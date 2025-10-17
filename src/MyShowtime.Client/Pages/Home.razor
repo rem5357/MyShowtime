@@ -268,9 +268,9 @@
                         <div class="watchstate-control">
                             <span class="label">Watch State</span>
                             <div class="radio-group">
-                                <label><input type="radio" name="watch-state" value="Unwatched" checked="@IsWatchStateSelected(ViewState.Unwatched)" @onchange="_ => ChangeWatchState(ViewState.Unwatched)" /> Unwatched</label>
-                                <label><input type="radio" name="watch-state" value="Partial" checked="@IsWatchStateSelected(ViewState.Partial)" @onchange="_ => ChangeWatchState(ViewState.Partial)" /> Partial</label>
-                                <label><input type="radio" name="watch-state" value="Watched" checked="@IsWatchStateSelected(ViewState.Watched)" @onchange="_ => ChangeWatchState(ViewState.Watched)" /> Watched</label>
+                                <label class="@(IsWatchStateSelected(ViewState.Unwatched) ? "radio-checked" : "")"><input type="radio" name="watch-state" value="Unwatched" checked="@IsWatchStateSelected(ViewState.Unwatched)" @onchange="_ => ChangeWatchState(ViewState.Unwatched)" /> Unwatched</label>
+                                <label class="@(IsWatchStateSelected(ViewState.Partial) ? "radio-checked" : "")"><input type="radio" name="watch-state" value="Partial" checked="@IsWatchStateSelected(ViewState.Partial)" @onchange="_ => ChangeWatchState(ViewState.Partial)" disabled="@(selectedDetail?.MediaType == MediaType.TvShow)" /> Partial</label>
+                                <label class="@(IsWatchStateSelected(ViewState.Watched) ? "radio-checked" : "")"><input type="radio" name="watch-state" value="Watched" checked="@IsWatchStateSelected(ViewState.Watched)" @onchange="_ => ChangeWatchState(ViewState.Watched)" /> Watched</label>
                             </div>
                         </div>
                         <div class="toggle-group">
@@ -351,21 +351,40 @@
             <div class="episodes-layout">
                 <div class="episode-detail">
                     <h3>Episode Details</h3>
-                    @if (selectedEpisode is null)
+                    @if (selectedEpisodeIds.Count == 0)
                     {
                         <p class="placeholder">Select an episode to view details.</p>
+                    }
+                    else if (selectedEpisodeIds.Count > 1)
+                    {
+                        <div class="episode-meta">
+                            <div class="episode-title">Multiple Episodes Selected</div>
+                            <div class="episode-date">@selectedEpisodeIds.Count episodes selected</div>
+                            <div class="episode-watch">
+                                <span class="label">Watch State</span>
+                                <div class="radio-group">
+                                    <label class="@(IsMultiEpisodeWatchState(ViewState.Unwatched) ? "radio-checked" : "")"><input type="radio" name="episode-watch" value="Unwatched" checked="@IsMultiEpisodeWatchState(ViewState.Unwatched)" @onchange="_ => UpdateMultipleEpisodeStates(ViewState.Unwatched)" /> Unwatched</label>
+                                    <label class="@(IsMultiEpisodeWatchState(ViewState.Partial) ? "radio-checked" : "")"><input type="radio" name="episode-watch" value="Partial" checked="@IsMultiEpisodeWatchState(ViewState.Partial)" @onchange="_ => UpdateMultipleEpisodeStates(ViewState.Partial)" /> Partial</label>
+                                    <label class="@(IsMultiEpisodeWatchState(ViewState.Watched) ? "radio-checked" : "")"><input type="radio" name="episode-watch" value="Watched" checked="@IsMultiEpisodeWatchState(ViewState.Watched)" @onchange="_ => UpdateMultipleEpisodeStates(ViewState.Watched)" /> Watched</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="episode-synopsis">
+                            <strong>Selected Episodes:</strong>
+                            <p>@FormatSelectedEpisodes()</p>
+                        </div>
                     }
                     else
                     {
                         <div class="episode-meta">
-                            <div class="episode-title">@selectedEpisode.Title (@FormatEpisodeCode(selectedEpisode))</div>
+                            <div class="episode-title">@selectedEpisode!.Title (@FormatEpisodeCode(selectedEpisode))</div>
                             <div class="episode-date">Aired @FormatDate(selectedEpisode.AirDate)</div>
                             <div class="episode-watch">
                                 <span class="label">Watch State</span>
                                 <div class="radio-group">
-                                    <label><input type="radio" name="episode-watch" value="Unwatched" checked="@IsEpisodeWatchState(ViewState.Unwatched)" @onchange="_ => UpdateEpisodeState(ViewState.Unwatched)" /> Unwatched</label>
-                                    <label><input type="radio" name="episode-watch" value="Partial" checked="@IsEpisodeWatchState(ViewState.Partial)" @onchange="_ => UpdateEpisodeState(ViewState.Partial)" /> Partial</label>
-                                    <label><input type="radio" name="episode-watch" value="Watched" checked="@IsEpisodeWatchState(ViewState.Watched)" @onchange="_ => UpdateEpisodeState(ViewState.Watched)" /> Watched</label>
+                                    <label class="@(IsEpisodeWatchState(ViewState.Unwatched) ? "radio-checked" : "")"><input type="radio" name="episode-watch" value="Unwatched" checked="@IsEpisodeWatchState(ViewState.Unwatched)" @onchange="_ => UpdateEpisodeState(ViewState.Unwatched)" /> Unwatched</label>
+                                    <label class="@(IsEpisodeWatchState(ViewState.Partial) ? "radio-checked" : "")"><input type="radio" name="episode-watch" value="Partial" checked="@IsEpisodeWatchState(ViewState.Partial)" @onchange="_ => UpdateEpisodeState(ViewState.Partial)" /> Partial</label>
+                                    <label class="@(IsEpisodeWatchState(ViewState.Watched) ? "radio-checked" : "")"><input type="radio" name="episode-watch" value="Watched" checked="@IsEpisodeWatchState(ViewState.Watched)" @onchange="_ => UpdateEpisodeState(ViewState.Watched)" /> Watched</label>
                                 </div>
                             </div>
                         </div>
@@ -384,6 +403,9 @@
                         <table class="data-grid">
                             <thead>
                                 <tr>
+                                    <th scope="col" class="col-checkbox">
+                                        <input type="checkbox" @onchange="ToggleAllEpisodes" checked="@AreAllEpisodesSelected()" />
+                                    </th>
                                     <th scope="col">
                                         <button type="button" class="sort-button" @onclick="() => SortEpisodes(EpisodeSortTitle)">
                                             <span>Title</span>
@@ -407,8 +429,11 @@
                             <tbody>
                                 @foreach (var episode in filteredEpisodes)
                                 {
-                                    var isSelected = selectedEpisode?.Id == episode.Id;
-                                    <tr class="@BuildEpisodeRowClasses(episode, isSelected)" @onclick="() => SelectEpisode(episode)">
+                                    var isSelected = selectedEpisodeIds.Contains(episode.Id);
+                                    <tr class="@BuildEpisodeRowClasses(episode, isSelected)" @onclick="(e) => HandleEpisodeRowClick(episode, e)">
+                                        <td class="col-checkbox" @onclick:stopPropagation="true">
+                                            <input type="checkbox" checked="@isSelected" @onchange="() => ToggleEpisodeSelection(episode.Id)" />
+                                        </td>
                                         <td>@episode.Title</td>
                                         <td class="col-center">@FormatEpisodeCode(episode)</td>
                                         <td>@FormatDate(episode.AirDate)</td>
@@ -470,6 +495,8 @@
     private TmdbSearchItemDto? selectedSearchResult;
     private MediaDetailDto? searchPreviewDetail;
     private EpisodeDto? selectedEpisode;
+    private readonly HashSet<Guid> selectedEpisodeIds = new();
+    private Guid? lastClickedEpisodeId;
 
     private UpdateMediaRequest updateModel = new()
     {
@@ -585,6 +612,8 @@
         selectedSummary = summary;
         selectedDetail = null;
         selectedEpisode = null;
+        selectedEpisodeIds.Clear();
+        lastClickedEpisodeId = null;
         episodes.Clear();
         filteredEpisodes.Clear();
         detailFeedback = null;
@@ -652,10 +681,158 @@
         ApplyEpisodeSorting();
     }
 
-    private void SelectEpisode(EpisodeDto episode)
+    private void HandleEpisodeRowClick(EpisodeDto episode, MouseEventArgs e)
     {
-        selectedEpisode = episode;
+        if (e.ShiftKey && lastClickedEpisodeId.HasValue)
+        {
+            // Shift-click: Select range
+            SelectEpisodeRange(lastClickedEpisodeId.Value, episode.Id);
+        }
+        else if (e.CtrlKey || e.MetaKey)
+        {
+            // Ctrl-click (or Cmd-click on Mac): Toggle selection
+            ToggleEpisodeSelection(episode.Id);
+            lastClickedEpisodeId = episode.Id;
+        }
+        else
+        {
+            // Normal click: Select single episode
+            selectedEpisodeIds.Clear();
+            selectedEpisodeIds.Add(episode.Id);
+            lastClickedEpisodeId = episode.Id;
+            UpdateSelectedEpisode();
+        }
         StateHasChanged();
+    }
+
+    private void ToggleEpisodeSelection(Guid episodeId)
+    {
+        if (selectedEpisodeIds.Contains(episodeId))
+        {
+            selectedEpisodeIds.Remove(episodeId);
+        }
+        else
+        {
+            selectedEpisodeIds.Add(episodeId);
+        }
+        lastClickedEpisodeId = episodeId;
+        UpdateSelectedEpisode();
+    }
+
+    private void SelectEpisodeRange(Guid startId, Guid endId)
+    {
+        var startIndex = filteredEpisodes.FindIndex(e => e.Id == startId);
+        var endIndex = filteredEpisodes.FindIndex(e => e.Id == endId);
+
+        if (startIndex < 0 || endIndex < 0) return;
+
+        var minIndex = Math.Min(startIndex, endIndex);
+        var maxIndex = Math.Max(startIndex, endIndex);
+
+        for (var i = minIndex; i <= maxIndex; i++)
+        {
+            selectedEpisodeIds.Add(filteredEpisodes[i].Id);
+        }
+        UpdateSelectedEpisode();
+    }
+
+    private void UpdateSelectedEpisode()
+    {
+        if (selectedEpisodeIds.Count == 1)
+        {
+            var id = selectedEpisodeIds.First();
+            selectedEpisode = episodes.FirstOrDefault(e => e.Id == id);
+        }
+        else
+        {
+            selectedEpisode = null;
+        }
+    }
+
+    private void ToggleAllEpisodes()
+    {
+        if (AreAllEpisodesSelected())
+        {
+            selectedEpisodeIds.Clear();
+        }
+        else
+        {
+            selectedEpisodeIds.Clear();
+            foreach (var episode in filteredEpisodes)
+            {
+                selectedEpisodeIds.Add(episode.Id);
+            }
+        }
+        UpdateSelectedEpisode();
+        StateHasChanged();
+    }
+
+    private bool AreAllEpisodesSelected()
+    {
+        return filteredEpisodes.Count > 0 && filteredEpisodes.All(e => selectedEpisodeIds.Contains(e.Id));
+    }
+
+    private async Task UpdateMultipleEpisodeStates(ViewState state)
+    {
+        if (selectedSummary is null || selectedEpisodeIds.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var episodeId in selectedEpisodeIds.ToList())
+            {
+                var updated = await MediaService.UpdateEpisodeViewStateAsync(selectedSummary.Id, episodeId, state);
+                if (updated is not null)
+                {
+                    var index = episodes.FindIndex(e => e.Id == updated.Id);
+                    if (index >= 0)
+                    {
+                        episodes[index] = updated;
+                    }
+                }
+            }
+
+            ApplyEpisodeFilter();
+            UpdateSelectedEpisode();
+
+            // Auto-calculate media state for TV shows
+            if (selectedDetail?.MediaType == MediaType.TvShow)
+            {
+                await RecalculateMediaStateAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            detailFeedback = $"Episode update failed: {ex.Message}";
+        }
+    }
+
+    private bool IsMultiEpisodeWatchState(ViewState state)
+    {
+        if (selectedEpisodeIds.Count <= 1) return false;
+
+        var selectedEpisodes = episodes.Where(e => selectedEpisodeIds.Contains(e.Id)).ToList();
+        return selectedEpisodes.Count > 0 && selectedEpisodes.All(e => e.WatchState == state);
+    }
+
+    private string FormatSelectedEpisodes()
+    {
+        var selectedEpisodes = filteredEpisodes.Where(e => selectedEpisodeIds.Contains(e.Id))
+            .OrderBy(e => e.SeasonNumber)
+            .ThenBy(e => e.EpisodeNumber)
+            .Take(10)
+            .ToList();
+
+        if (selectedEpisodes.Count == 0) return "None";
+
+        var formatted = string.Join(", ", selectedEpisodes.Select(FormatEpisodeCode));
+        if (selectedEpisodeIds.Count > 10)
+        {
+            formatted += $" and {selectedEpisodeIds.Count - 10} more...";
+        }
+        return formatted;
     }
 
     private async Task SelectSearchResultAsync(TmdbSearchItemDto result)
@@ -1342,6 +1519,80 @@ private async Task RunSearchAsync(int page)
             return;
         }
 
+        // For TV shows, handle bulk episode updates with confirmation
+        if (selectedDetail?.MediaType == MediaType.TvShow && selectedSummary is not null)
+        {
+            if (state == ViewState.Watched)
+            {
+                if (!await ConfirmBulkUpdateAsync("Set all Season 1+ episodes to Watched?"))
+                {
+                    return;
+                }
+
+                detailFeedback = "Updating all episodes...";
+                StateHasChanged();
+
+                try
+                {
+                    var success = await MediaService.BulkUpdateEpisodesAsync(selectedSummary.Id, ViewState.Watched, excludeSpecials: true);
+                    if (success)
+                    {
+                        // Reload episodes
+                        episodes = (await MediaService.GetEpisodesAsync(selectedSummary.Id)).ToList();
+                        ApplyEpisodeFilter();
+
+                        // Auto-calculate and set media state
+                        await RecalculateMediaStateAsync();
+                        detailFeedback = null;
+                    }
+                    else
+                    {
+                        detailFeedback = "Failed to update episodes.";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    detailFeedback = $"Bulk update failed: {ex.Message}";
+                }
+            }
+            else if (state == ViewState.Unwatched)
+            {
+                if (!await ConfirmBulkUpdateAsync("Set all episodes to Unwatched?"))
+                {
+                    return;
+                }
+
+                detailFeedback = "Updating all episodes...";
+                StateHasChanged();
+
+                try
+                {
+                    var success = await MediaService.BulkUpdateEpisodesAsync(selectedSummary.Id, ViewState.Unwatched, excludeSpecials: false);
+                    if (success)
+                    {
+                        // Reload episodes
+                        episodes = (await MediaService.GetEpisodesAsync(selectedSummary.Id)).ToList();
+                        ApplyEpisodeFilter();
+
+                        // Auto-calculate and set media state
+                        await RecalculateMediaStateAsync();
+                        detailFeedback = null;
+                    }
+                    else
+                    {
+                        detailFeedback = "Failed to update episodes.";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    detailFeedback = $"Bulk update failed: {ex.Message}";
+                }
+            }
+            // Partial state is disabled for TV shows, so this shouldn't be reached
+            return;
+        }
+
+        // For movies, just update the watch state directly
         updateModel.WatchState = state;
         await SaveDetailChanges();
     }
@@ -1431,11 +1682,70 @@ private async Task RunSearchAsync(int page)
                 }
                 ApplyEpisodeFilter();
                 selectedEpisode = updated;
+
+                // Auto-calculate media state for TV shows
+                if (selectedDetail?.MediaType == MediaType.TvShow)
+                {
+                    await RecalculateMediaStateAsync();
+                }
             }
         }
         catch (Exception ex)
         {
             detailFeedback = $"Episode update failed: {ex.Message}";
+        }
+    }
+
+    private async Task<bool> ConfirmBulkUpdateAsync(string message)
+    {
+        try
+        {
+            return await JS.InvokeAsync<bool>("confirm", message);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task RecalculateMediaStateAsync()
+    {
+        if (selectedSummary is null || selectedDetail?.MediaType != MediaType.TvShow)
+        {
+            return;
+        }
+
+        // Calculate new state based on episodes
+        var s1PlusEpisodes = episodes.Where(e => e.SeasonNumber >= 1).ToList();
+
+        if (s1PlusEpisodes.Count == 0)
+        {
+            // No regular episodes, leave state as is
+            return;
+        }
+
+        ViewState newState;
+        var allEpisodesUnwatched = episodes.All(e => e.WatchState == ViewState.Unwatched);
+        var allS1PlusWatched = s1PlusEpisodes.All(e => e.WatchState == ViewState.Watched);
+
+        if (allEpisodesUnwatched)
+        {
+            newState = ViewState.Unwatched;
+        }
+        else if (allS1PlusWatched)
+        {
+            newState = ViewState.Watched;
+        }
+        else
+        {
+            newState = ViewState.Partial;
+        }
+
+        // Only update if different
+        if (updateModel.WatchState != newState)
+        {
+            updateModel.WatchState = newState;
+            await SaveDetailChanges();
         }
     }
 
