@@ -1,5 +1,9 @@
 ﻿@using MyShowtime.Client
+@using MyShowtime.Client.Services
 @inherits LayoutComponentBase
+@inject UserStateService UserState
+@inject NavigationManager Navigation
+@implements IDisposable
 
 <div class="app-shell">
     <header class="app-header">
@@ -7,6 +11,13 @@
             <span class="brand-title">MyShowtime Web Companion</span>
         </div>
         <div class="header-actions">
+            @if (UserState.CurrentUser != null)
+            {
+                <div class="user-info">
+                    <span class="user-name">@UserState.CurrentUser.Name</span>
+                    <button class="logout-link" @onclick="Logout">Logout</button>
+                </div>
+            }
             <div class="build-badge header-build">Version @BuildInfo.Version &nbsp;&nbsp; Build @BuildInfo.BuildNumber</div>
             <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer noopener">Powered by TMDB</a>
         </div>
@@ -16,3 +27,55 @@
         @Body
     </main>
 </div>
+
+@code {
+    private bool _authCheckComplete = false;
+
+    protected override void OnInitialized()
+    {
+        UserState.OnUserChanged += OnUserStateChanged;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            CheckAuthentication();
+        }
+    }
+
+    private void OnUserStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void CheckAuthentication()
+    {
+        if (_authCheckComplete) return;
+
+        _authCheckComplete = true;
+        var currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var isLoginPage = currentUri.AbsolutePath.EndsWith("/login", StringComparison.OrdinalIgnoreCase);
+
+        if (!isLoginPage && !UserState.IsLoggedIn)
+        {
+            Navigation.NavigateTo("login", replace: true);
+        }
+        else
+        {
+            // Trigger re-render to show user info if logged in
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task Logout()
+    {
+        await UserState.LogoutAsync();
+        Navigation.NavigateTo("login", replace: true);
+    }
+
+    public void Dispose()
+    {
+        UserState.OnUserChanged -= OnUserStateChanged;
+    }
+}

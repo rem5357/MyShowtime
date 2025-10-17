@@ -38,15 +38,15 @@ dotnet publish "${REPO_DIR}/src/MyShowtime.Api/MyShowtime.Api.csproj" -c Release
 echo "Publishing Client to ${CLIENT_OUTPUT}"
 dotnet publish "${REPO_DIR}/src/MyShowtime.Client/MyShowtime.Client.csproj" -c Release -o "${CLIENT_OUTPUT}"
 
-echo "Deploying API to /var/www/projects/MyShowtime/api/"
-mkdir -p /var/www/projects/MyShowtime/api/
-rsync -a --delete "${API_OUTPUT}/" /var/www/projects/MyShowtime/api/
-
 CLIENT_WWWROOT="${CLIENT_OUTPUT}/wwwroot"
 if [[ ! -d "${CLIENT_WWWROOT}" ]]; then
   echo "Expected client publish directory ${CLIENT_WWWROOT} not found." >&2
   exit 1
 fi
+
+echo "Deploying API to /var/www/projects/MyShowtime/api/"
+mkdir -p /var/www/projects/MyShowtime/api/
+rsync -a --delete "${API_OUTPUT}/" /var/www/projects/MyShowtime/api/
 
 echo "Deploying Client assets to /var/www/projects/MyShowtime/wwwroot/"
 mkdir -p /var/www/projects/MyShowtime/wwwroot/

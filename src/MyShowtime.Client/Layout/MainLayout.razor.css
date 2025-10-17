@@ -45,6 +45,32 @@
     flex: 1;
 }
 
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-name {
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 500;
+}
+
+.logout-link {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 0.9rem;
+    text-decoration: underline;
+    transition: color 0.2s;
+}
+
+.logout-link:hover {
+    color: rgba(255, 255, 255, 1);
+}
+
 @media (max-width: 768px) {
     .app-header {
         flex-direction: column;

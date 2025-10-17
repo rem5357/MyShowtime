@@ -19,19 +19,6 @@ public class Media
 
     public DateOnly? ReleaseDate { get; set; }
 
-    [Range(0, 10)]
-    public int Priority { get; set; } = 3;
-
-    [MaxLength(64)]
-    public string? Source { get; set; }
-
-    [MaxLength(64)]
-    public string? AvailableOn { get; set; }
-
-    public ViewState WatchState { get; set; } = ViewState.Unwatched;
-
-    public bool Hidden { get; set; }
-
     public string? Synopsis { get; set; }
 
     [MaxLength(256)]
@@ -42,9 +29,6 @@ public class Media
 
     [Column(TypeName = "text")]
     public string? Cast { get; set; }
-
-    [Column(TypeName = "text")]
-    public string? Notes { get; set; }
 
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 

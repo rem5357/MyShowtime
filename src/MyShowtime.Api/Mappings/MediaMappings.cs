@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MyShowtime.Api.Entities;
 using MyShowtime.Shared.Dtos;
+using MyShowtime.Shared.Enums;
 
 namespace MyShowtime.Api.Mappings;
 
@@ -8,43 +9,43 @@ public static class MediaMappings
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public static MediaSummaryDto ToSummaryDto(this Media entity) =>
+    public static MediaSummaryDto ToSummaryDto(this Media entity, UserMedia? userMedia = null) =>
         new(
             entity.Id,
             entity.TmdbId,
             entity.MediaType,
             entity.Title,
             entity.ReleaseDate,
-            entity.Priority,
-            entity.Source,
-            entity.WatchState,
-            entity.Hidden,
+            userMedia?.Priority ?? 3,
+            userMedia?.Source,
+            userMedia?.WatchState ?? ViewState.Unwatched,
+            userMedia?.Hidden ?? false,
             entity.CreatedAtUtc,
             entity.UpdatedAtUtc,
             entity.LastSyncedAtUtc);
 
-    public static MediaDetailDto ToDetailDto(this Media entity) =>
+    public static MediaDetailDto ToDetailDto(this Media entity, UserMedia? userMedia = null) =>
         new(
             entity.Id,
             entity.TmdbId,
             entity.MediaType,
             entity.Title,
             entity.ReleaseDate,
-            entity.Priority,
-            entity.Source,
-            entity.WatchState,
-            entity.Hidden,
+            userMedia?.Priority ?? 3,
+            userMedia?.Source,
+            userMedia?.WatchState ?? ViewState.Unwatched,
+            userMedia?.Hidden ?? false,
             entity.Synopsis,
             entity.PosterPath,
             DeserializeList(entity.Genres),
             DeserializeList(entity.Cast),
-            entity.Notes,
-            entity.AvailableOn,
+            userMedia?.Notes,
+            userMedia?.AvailableOn,
             entity.CreatedAtUtc,
             entity.UpdatedAtUtc,
             entity.LastSyncedAtUtc);
 
-    public static EpisodeDto ToDto(this Episode entity) =>
+    public static EpisodeDto ToDto(this Episode entity, UserEpisode? userEpisode = null) =>
         new(
             entity.Id,
             entity.MediaId,
@@ -54,7 +55,7 @@ public static class MediaMappings
             entity.Title,
             entity.AirDate,
             entity.IsSpecial,
-            entity.WatchState,
+            userEpisode?.WatchState ?? ViewState.Unwatched,
             entity.Synopsis);
 
     public static string SerializeList(IReadOnlyCollection<string>? values) =>

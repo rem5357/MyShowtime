@@ -29,8 +29,6 @@ public class Episode
 
     public bool IsSpecial { get; set; }
 
-    public ViewState WatchState { get; set; } = ViewState.Unwatched;
-
     public string? Synopsis { get; set; }
 
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
