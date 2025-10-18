@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using MyShowtime.Client;
 using MyShowtime.Client.Services;
 
@@ -7,32 +8,36 @@ var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
-// Register UserStateService as singleton first (needs to be available for the handler)
-builder.Services.AddSingleton<UserStateService>();
-
-// Register the authenticated HTTP message handler
-builder.Services.AddScoped<AuthenticatedHttpMessageHandler>();
-
-// Configure HttpClient with the authenticated handler
-builder.Services.AddScoped(sp =>
+// Configure AWS Cognito authentication
+builder.Services.AddOidcAuthentication(options =>
 {
-    var handler = sp.GetRequiredService<AuthenticatedHttpMessageHandler>();
-    handler.InnerHandler = new HttpClientHandler();
+    // AWS Cognito configuration
+    options.ProviderOptions.Authority = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8";
+    options.ProviderOptions.ClientId = "548ed6mlir2cdkq30aphbn3had";
+    options.ProviderOptions.ResponseType = "code";
 
-    var httpClient = new HttpClient(handler)
-    {
-        BaseAddress = new Uri(builder.HostEnvironment.BaseAddress)
-    };
+    // Scopes
+    options.ProviderOptions.DefaultScopes.Clear();
+    options.ProviderOptions.DefaultScopes.Add("openid");
+    options.ProviderOptions.DefaultScopes.Add("email");
+    options.ProviderOptions.DefaultScopes.Add("profile");
 
-    return httpClient;
+    // Cognito endpoints (using hosted UI domain)
+    options.ProviderOptions.MetadataUrl = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8/.well-known/openid-configuration";
+
+    // Post-logout redirect
+    options.ProviderOptions.PostLogoutRedirectUri = builder.HostEnvironment.BaseAddress;
+    options.ProviderOptions.RedirectUri = builder.HostEnvironment.BaseAddress + "authentication/login-callback";
 });
+
+// Configure HttpClient with automatic JWT bearer token injection
+builder.Services.AddHttpClient("MyShowtime.Api", client =>
+    client.BaseAddress = new Uri(builder.HostEnvironment.BaseAddress))
+    .AddHttpMessageHandler<BaseAddressAuthorizationMessageHandler>();
+
+// Register scoped HttpClient for components
+builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("MyShowtime.Api"));
 
 builder.Services.AddScoped<MediaLibraryService>();
 
-var host = builder.Build();
-
-// Initialize user state from localStorage
-var userStateService = host.Services.GetRequiredService<UserStateService>();
-await userStateService.InitializeAsync();
-
-await host.RunAsync();
+await builder.Build().RunAsync();

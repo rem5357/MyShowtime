@@ -283,18 +283,16 @@ Preserve `/etc/nginx/snippets/projects/MyShowtime.conf` (rewrites + proxy) whene
 - Sequential TMDB imports for seasons (potential performance bottleneck)
 - Watch provider lookup adds per-result latency
 - UI font sizing needs refinement
-- Multi-user authentication uses simple X-User-Id header (not production-ready; needs JWT/OAuth)
 
 ## Suggested Improvements
 
 When working on enhancements:
 
-1. **Advanced WPF features** still pending: person/crew search mode, streaming availability editing, richer relationship views
+1. **Advanced features** still pending: person/crew search mode, streaming availability editing, richer relationship views
 2. **Testing**: Add unit tests for services, integration tests for API endpoints, E2E tests for critical workflows
-3. **Security**: Enable HTTPS, rotate credentials, implement proper secret management, upgrade to JWT/OAuth authentication
+3. **Security**: Enable HTTPS, rotate credentials, implement proper secret management
 4. **Performance**: Consider caching/batching watch provider lookups, parallel TMDB requests for seasons
 5. **User Experience**: Refine font sizing, improve mobile responsiveness
-6. **Authentication**: Upgrade from header-based auth to JWT bearer tokens with proper validation and expiration
 
 ## Code Style & Conventions
 
@@ -333,91 +331,191 @@ When working on enhancements:
 
 - **Watch Provider Enrichment**: Use parallel async processing with `Task.WhenAll()` for enriching search results with streaming provider data. The semaphore limits concurrent TMDB calls (3) while allowing multiple items to be processed simultaneously. **Never use sequential `foreach` loops with `await` inside** - this creates bottlenecks and timeouts.
 
-### Multi-User Authentication (v0.65)
+### Authentication (AWS Cognito - v0.70)
 
-**Architecture**: The multi-user system uses a **shared media catalog** with **per-user tracking data**:
-- `Media` and `Episodes` tables store TMDB data (shared across all users)
-- `UserMedia` and `UserEpisode` junction tables store user-specific data (watch states, priorities, notes)
-- Each user sees the same media catalog but with their own personal tracking information
+**Architecture**: Production-ready authentication using AWS Cognito User Pools with JWT bearer tokens and auto-user provisioning:
+- OAuth 2.0 / OpenID Connect (OIDC) authentication flow
+- Authorization Code Grant with PKCE (secure for public clients like Blazor WASM)
+- JWT bearer tokens validated on every API request
+- User records auto-provisioned on first login from JWT claims
+- Multi-user data isolation with shared media catalog and per-user tracking
 
-**Client-Side Implementation**:
-1. **User Selection**: Login page (`Login.razor`) fetches users from `/api/users` and stores selected user in localStorage
-2. **UserStateService**: Singleton service maintains current user state across the app
-3. **AuthenticatedHttpMessageHandler**: Custom `DelegatingHandler` that automatically adds `X-User-Id` header to all outgoing HTTP requests
-4. **HttpClient Setup**: Configured with the custom handler in `Program.cs` to inject user context into every API call
+**AWS Cognito Configuration**:
+- **User Pool**: `us-east-2_VkwlcR2m8` (AWS region: us-east-2 - Ohio)
+- **App Client ID**: `548ed6mlir2cdkq30aphbn3had`
+- **Cognito Domain**: `https://us-east-2vkwlcr2m8.auth.us-east-2.amazoncognito.com`
+- **Authority**: `https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8`
+- **OIDC Metadata**: `https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8/.well-known/openid-configuration`
+- **Scopes**: openid, email, profile
+- **Callback URL**: `https://goldshire.tail80a7ec.ts.net/MyShowtime/authentication/login-callback`
+- **Post-logout URL**: `https://goldshire.tail80a7ec.ts.net/MyShowtime/`
 
-**Server-Side Implementation**:
-1. **CurrentUserService**: Scoped service that extracts user ID from the `X-User-Id` request header
-2. **IHttpContextAccessor**: Registered to provide access to the current HTTP context
-3. **Dependency Injection**: All API endpoints inject `ICurrentUserService` to get the authenticated user ID
-4. **Query Filtering**: Every database query filters by the current user's ID to ensure data isolation
+**Client-Side Implementation** (`src/MyShowtime.Client/`):
 
-**Critical Lessons Learned**:
+1. **NuGet Packages**:
+   - `Microsoft.AspNetCore.Components.WebAssembly.Authentication` (v8.0.21)
+   - `Microsoft.Extensions.Http` (v8.0.1)
 
-1. **Query Logic Bug** (THE KEY ISSUE):
-   - **Wrong**: `where includeHiddenValue || um == null || !um.Hidden`
-   - This incorrectly showed ALL media to users with no UserMedia records (`um == null` matched everything)
-   - **Correct**: `where um != null && (includeHiddenValue || !um.Hidden)`
-   - Only show media that the user has explicitly added to their library
+2. **Program.cs**:
+   - Configures OIDC authentication with `AddOidcAuthentication()`
+   - Sets up named HttpClient factory with `BaseAddressAuthorizationMessageHandler` for automatic JWT injection
+   - HttpClient configuration:
+     ```csharp
+     builder.Services.AddHttpClient("MyShowtime.Api", client =>
+         client.BaseAddress = new Uri(builder.HostEnvironment.BaseAddress))
+         .AddHttpMessageHandler<BaseAddressAuthorizationMessageHandler>();
 
-2. **Header Transmission**:
-   - Use `DelegatingHandler` to automatically add headers to all requests
-   - Don't manually add headers in each service method (error-prone and repetitive)
-   - The handler wraps the `HttpClient` and intercepts all requests
+     builder.Services.AddScoped(sp =>
+         sp.GetRequiredService<IHttpClientFactory>().CreateClient("MyShowtime.Api"));
+     ```
 
-3. **Service Scoping**:
-   - `UserStateService` is **Singleton** (persists across app lifetime)
-   - `CurrentUserService` is **Scoped** (per-request lifetime)
-   - `AuthenticatedHttpMessageHandler` is **Scoped** (can inject scoped services)
-   - `HttpClient` is **Scoped** (new instance per scope with the handler)
+3. **App.razor**:
+   - Wraps router with `<CascadingAuthenticationState>`
+   - Uses `<AuthorizeRouteView>` to protect routes
+   - Provides `<Authorizing>` and `<NotAuthorized>` UI states
 
-4. **User Context Extraction**:
-   - Always use `ICurrentUserService.GetRequiredUserId()` in endpoints
-   - Never hardcode user IDs (removed `const int TEMP_USER_ID = 101`)
-   - Add comprehensive logging to debug header transmission issues
+4. **Authentication.razor** (`/authentication/{action}`):
+   - OAuth callback handler page
+   - Uses `<RemoteAuthenticatorView>` with templates for login/logout states
+   - Handles: LoggingIn, CompletingLogOut, LogOutSucceeded, LogOutFailed
 
-5. **Database Schema Design**:
-   - Junction tables (`UserMedia`, `UserEpisode`) enable many-to-many relationships
-   - Composite unique constraints (`UserId + MediaId`) prevent duplicate tracking
-   - Cascade deletes ensure referential integrity
-   - Separate shared data (Media/Episodes) from user data (UserMedia/UserEpisode)
+5. **MainLayout.razor**:
+   - Uses `<AuthorizeView>` to display authenticated user info
+   - Shows user name from JWT claims: `@context.User.Identity?.Name`
+   - Logout button navigates to `authentication/logout`
 
-6. **Testing Multi-User Isolation**:
-   - Query the database directly to verify data distribution: `SELECT user_id, COUNT(*) FROM user_media GROUP BY user_id`
-   - Test API endpoints with different `X-User-Id` headers: `curl -H "X-User-Id: 102" http://localhost:5000/api/media`
-   - Check logs for "User ID from header" messages to confirm proper extraction
-   - Verify SQL queries use `@__userId_0` parameter (not hardcoded values)
+6. **Home.razor**:
+   - Protected with `@attribute [Authorize]` (requires authentication)
 
-7. **Debugging Tips**:
-   - Add debug logging in `CurrentUserService` to log all headers and user ID extraction
-   - Add debug logging in endpoints to confirm which user ID is being used
-   - Use `journalctl` to view API logs: `sudo journalctl -u myshowtime-api.service -n 50`
-   - Check for EF Core SQL queries to see the actual parameter values
+7. **_Imports.razor**:
+   - Imports `Microsoft.AspNetCore.Components.Authorization`
+   - Imports `Microsoft.AspNetCore.Components.WebAssembly.Authentication`
 
-**Current Implementation Status**:
-- ✅ Database schema supports full multi-user isolation
-- ✅ User selection UI with login page
-- ✅ Client-side user context passed via HTTP headers
-- ✅ Server-side user context extraction and validation
-- ✅ All API endpoints filter by current user
-- ⚠️ Uses simple header-based auth (not production-ready)
-- ❌ No JWT/OAuth token validation
-- ❌ No session management or token expiration
+**Server-Side Implementation** (`src/MyShowtime.Api/`):
 
-**Next Steps for Production**:
-1. Replace `X-User-Id` header with JWT bearer tokens
-2. Add authentication middleware to validate tokens
-3. Extract user claims from JWT instead of header
-4. Implement token refresh and expiration
-5. Add authorization policies for role-based access
-6. Consider AWS Cognito integration (CognitoSub field already exists)
+1. **NuGet Packages**:
+   - `Microsoft.AspNetCore.Authentication.JwtBearer` (v8.0.21)
+
+2. **Program.cs**:
+   - Registers `IHttpContextAccessor` for accessing HTTP context
+   - Configures JWT Bearer authentication:
+     ```csharp
+     builder.Services.AddAuthentication("Bearer")
+         .AddJwtBearer(options =>
+         {
+             options.Authority = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8";
+             options.TokenValidationParameters = new TokenValidationParameters
+             {
+                 ValidateIssuer = true,
+                 ValidIssuer = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8",
+                 ValidateAudience = true,
+                 ValidAudience = "548ed6mlir2cdkq30aphbn3had",
+                 ValidateLifetime = true
+             };
+             options.MapInboundClaims = false; // Keep original claim names like "sub"
+         });
+     ```
+   - Adds authentication/authorization middleware (MUST be after routing, before endpoints)
+
+3. **CurrentUserService.cs** (`src/MyShowtime.Api/Services/CurrentUserService.cs`):
+   - **Complete rewrite** for JWT-based authentication
+   - Extracts user from JWT claims instead of HTTP headers
+   - Key JWT claims:
+     - `sub` (Subject): Cognito user ID (Guid) - stored as `CognitoSub` in AppUser table
+     - `email`: User's email address
+     - `name`: User's display name
+   - **Auto-provisioning logic**:
+     ```csharp
+     // Extracts CognitoSub from JWT "sub" claim
+     var cognitoSub = context.User.FindFirst("sub")?.Value;
+
+     // Looks up user by CognitoSub
+     var user = db.AppUsers.FirstOrDefault(u => u.CognitoSub == cognitoSubGuid);
+
+     // If not found, creates new user with Cognito claims
+     if (user == null)
+     {
+         var newUser = new AppUser
+         {
+             CognitoSub = cognitoSubGuid,
+             Email = email ?? $"{cognitoSub}@unknown.local",
+             Name = name,
+             IsActive = true,
+             CreatedAt = DateTime.UtcNow,
+             LastLogin = DateTime.UtcNow
+         };
+         db.AppUsers.Add(newUser);
+         db.SaveChanges();
+     }
+     ```
+   - Updates `LastLogin` timestamp on every authenticated request
+   - Caches user ID per request to avoid multiple database lookups
+   - Provides `GetRequiredUserId()` for endpoints requiring authentication
+
+4. **All API Endpoints**:
+   - Continue using `ICurrentUserService.GetRequiredUserId()` to get authenticated user
+   - No changes needed to endpoint implementations (seamless upgrade from header-based auth)
+   - JWT validation happens automatically in middleware before requests reach endpoints
+
+**Authentication Flow**:
+
+1. **Initial Access**: User visits app → redirected to Cognito hosted UI for login
+2. **Login**: User authenticates with Cognito (username/password, MFA, social providers, etc.)
+3. **Callback**: Cognito redirects back with authorization code → PKCE exchange for tokens
+4. **Token Storage**: Blazor WASM stores access token in browser storage (handled automatically)
+5. **API Requests**: Every HTTP request includes JWT bearer token in `Authorization` header
+6. **Token Validation**: ASP.NET Core middleware validates JWT signature, issuer, audience, expiration
+7. **User Extraction**: CurrentUserService extracts `sub` claim and looks up/creates AppUser
+8. **Data Access**: API endpoint uses user ID to filter database queries for data isolation
+
+**Multi-User Data Model** (unchanged from v0.65):
+- `Media` and `Episodes` tables: Shared TMDB catalog (all users)
+- `UserMedia` junction table: Per-user tracking (watch state, priority, notes, etc.)
+- `UserEpisode` junction table: Per-user episode watch states
+- `UserSettings` table: Per-user preferences (one-to-one with AppUser)
+- All queries filter by `UserId` to ensure complete data isolation
+
+**Key Benefits of Cognito Implementation**:
+- ✅ Production-ready authentication with industry-standard OAuth 2.0/OIDC
+- ✅ Managed user pool (no password storage, automatic security updates)
+- ✅ JWT bearer tokens with cryptographic signature validation
+- ✅ Token expiration and refresh handled automatically by Blazor WASM
+- ✅ Auto-user provisioning (friends can self-register via Cognito)
+- ✅ Support for MFA, social login, password policies (configured in Cognito)
+- ✅ Works seamlessly with Tailscale (private network, no public firewall exposure)
+- ✅ Minimal changes to API endpoints (same `ICurrentUserService` interface)
+
+**Database Schema**:
+- `AppUser.CognitoSub` (Guid, unique): Maps to JWT "sub" claim
+- `AppUser.Email`, `AppUser.Name`: Populated from JWT claims on first login
+- `AppUser.LastLogin`: Updated on every authenticated request
+
+**Setup Guide**:
+- See `CognitoSetupGuide.md` for step-by-step AWS Console instructions
+- Includes User Pool creation, app client configuration, hosted UI setup
+
+**Critical Implementation Notes**:
+1. **MapInboundClaims = false**: Keeps original JWT claim names (`sub`, not `http://schemas.xmlsoap.org/...`)
+2. **BaseAddressAuthorizationMessageHandler**: Automatically adds JWT to requests matching base address
+3. **Named HttpClient**: Use factory pattern to ensure handler is properly configured
+4. **PKCE Flow**: Authorization Code with PKCE is secure for public clients (no client secret needed)
+5. **Middleware Order**: Authentication must come after `UseRouting()`, before `MapControllers()`/`MapEndpoints()`
+6. **Scoped vs Singleton**: CurrentUserService is scoped (per-request), caches user ID within request
 
 **Files to Reference**:
-- See `DatabaseSchema.md` for complete database schema documentation
-- Client: `src/MyShowtime.Client/Services/AuthenticatedHttpMessageHandler.cs`
-- Client: `src/MyShowtime.Client/Services/UserStateService.cs`
-- API: `src/MyShowtime.Api/Services/CurrentUserService.cs`
-- API: `src/MyShowtime.Api/Program.cs` (all endpoint implementations)
+- Setup Guide: `CognitoSetupGuide.md`
+- Database Schema: `DatabaseSchema.md`
+- Client Config: `src/MyShowtime.Client/Program.cs`
+- Client Auth UI: `src/MyShowtime.Client/Pages/Authentication.razor`
+- Client Layout: `src/MyShowtime.Client/Layout/MainLayout.razor`
+- Client Imports: `src/MyShowtime.Client/_Imports.razor`
+- API Config: `src/MyShowtime.Api/Program.cs`
+- User Service: `src/MyShowtime.Api/Services/CurrentUserService.cs`
+
+**Removed Files** (from v0.65 test implementation):
+- `src/MyShowtime.Client/Pages/Login.razor` (replaced with Cognito hosted UI)
+- `src/MyShowtime.Client/Services/UserStateService.cs` (replaced with OIDC auth state)
+- `src/MyShowtime.Client/Services/AuthenticatedHttpMessageHandler.cs` (replaced with BaseAddressAuthorizationMessageHandler)
 
 ### Blazor Error UI
 

@@ -51,6 +51,24 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
 });
 
+// Configure JWT Authentication for AWS Cognito
+builder.Services.AddAuthentication("Bearer")
+    .AddJwtBearer(options =>
+    {
+        options.Authority = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8";
+        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8",
+            ValidateAudience = true,
+            ValidAudience = "548ed6mlir2cdkq30aphbn3had", // App Client ID
+            ValidateLifetime = true
+        };
+        options.MapInboundClaims = false; // Keep original claim names like "sub"
+    });
+
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -62,6 +80,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseResponseCompression();
 app.UseStatusCodePages();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 using (var scope = app.Services.CreateScope())
 {

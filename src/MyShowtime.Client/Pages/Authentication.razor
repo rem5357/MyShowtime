@@ -1,0 +1,68 @@
+@page "/authentication/{action}"
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+
+<RemoteAuthenticatorView Action="@Action">
+    <LoggingIn>
+        <div class="auth-container">
+            <h3>Logging in...</h3>
+            <p>Please wait while we authenticate you.</p>
+        </div>
+    </LoggingIn>
+
+    <CompletingLogOut>
+        <div class="auth-container">
+            <h3>Logging out...</h3>
+            <p>Please wait while we sign you out.</p>
+        </div>
+    </CompletingLogOut>
+
+    <LogOutSucceeded>
+        <div class="auth-container">
+            <h3>Logged out successfully</h3>
+            <p>You have been signed out. <a href="/">Return to home</a></p>
+        </div>
+    </LogOutSucceeded>
+
+    <LogOutFailed>
+        <div class="auth-container">
+            <h3>Logout failed</h3>
+            <p>There was an error signing you out. <a href="/">Return to home</a></p>
+        </div>
+    </LogOutFailed>
+</RemoteAuthenticatorView>
+
+@code {
+    [Parameter] public string? Action { get; set; }
+}
+
+<style>
+    .auth-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 20px;
+        background-color: #1a1a1a;
+        color: #e0e0e0;
+    }
+
+    .auth-container h3 {
+        font-size: 24px;
+        margin-bottom: 10px;
+    }
+
+    .auth-container p {
+        font-size: 16px;
+        color: #a0a0a0;
+    }
+
+    .auth-container a {
+        color: #4a90e2;
+        text-decoration: none;
+    }
+
+    .auth-container a:hover {
+        text-decoration: underline;
+    }
+</style>
