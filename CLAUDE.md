@@ -517,6 +517,148 @@ When working on enhancements:
 - `src/MyShowtime.Client/Services/UserStateService.cs` (replaced with OIDC auth state)
 - `src/MyShowtime.Client/Services/AuthenticatedHttpMessageHandler.cs` (replaced with BaseAddressAuthorizationMessageHandler)
 
+### AWS Cognito Implementation Status (v0.71)
+
+**CURRENT STATUS: Partially implemented but NOT FUNCTIONAL**
+
+The AWS Cognito authentication implementation is in progress but encounters a critical blocker. The application loads, displays the login UI, and successfully redirects to Cognito's hosted UI, but fails during the OAuth token exchange with a 400 Bad Request error.
+
+**Root Cause:**
+The current User Pool and App Client configuration is incompatible with Blazor WebAssembly:
+1. **App Client has a Client Secret**: The existing app client (`548ed6mlir2cdkq30aphbn3had`) was created with a client secret
+2. **Blazor WASM is a Public Client**: Single-page applications run entirely in the browser and cannot securely store secrets
+3. **Token Exchange Fails**: Cognito expects the client secret during token exchange, but Blazor WASM doesn't send it (correctly, as it shouldn't)
+4. **User Pool Uses Phone Authentication**: Configured with phone number as the sign-in attribute instead of email
+5. **SMS Not Configured**: Phone-based password reset requires AWS SNS setup (additional complexity and cost)
+
+**Issues Encountered:**
+
+1. **Missing AuthenticationService.js** (FIXED in Build 143)
+   - Error: `Could not find 'AuthenticationService.init' ('AuthenticationService' was undefined)`
+   - Root cause: `index.html` missing required script reference
+   - Fix: Added `<script src="_content/Microsoft.AspNetCore.Components.WebAssembly.Authentication/AuthenticationService.js"></script>`
+   - Location: `src/MyShowtime.Client/wwwroot/index.html:30`
+
+2. **Redirect URI Mismatch** (FIXED in Build 144)
+   - Error: Cognito returned `error=redirect_mismatch`
+   - Root cause: String concatenation didn't handle trailing slashes correctly
+   - Fix: Used `Uri` class for proper path construction: `new Uri(baseUri, "authentication/login-callback").ToString()`
+   - Location: `src/MyShowtime.Client/Program.cs:29-31`
+
+3. **Missing OAuth Scope**
+   - Error: "There was an error signing in" with no details
+   - Root cause: Code requested "profile" scope but app client only had "openid", "email", "phone" enabled
+   - Fix: Enabled "profile" scope in Cognito app client OpenID Connect scopes configuration
+   - Note: Scopes must be explicitly enabled in AWS Console → App clients → Edit → OpenID Connect scopes
+
+4. **Client Secret Incompatibility** (BLOCKER - not yet resolved)
+   - Error: `POST https://us-east-2vkwlcr2m8.auth.us-east-2.amazoncognito.com/oauth2/token 400 (Bad Request)`
+   - Root cause: App client was created as "Traditional web application" which generates a client secret
+   - Impact: OAuth token exchange fails because Cognito expects the secret but Blazor WASM doesn't (and shouldn't) send it
+   - Resolution: Must create NEW app client as "Single-page application (SPA)" type (public client, no secret)
+   - AWS Limitation: Cannot remove client secret from existing app client; must create new one
+
+5. **Phone Number Authentication Challenges**
+   - User pool configured with phone number as primary sign-in attribute
+   - Password reset via SMS failed: "Invalid input: Could not reset password for the account"
+   - Root cause: AWS SNS not configured for SMS delivery (requires additional setup and incurs costs)
+   - AWS Limitation: Cannot change sign-in attributes after user pool creation
+   - Resolution: Must create NEW user pool with email as sign-in attribute
+
+**Lessons Learned:**
+
+1. **Blazor WASM Authentication Requirements:**
+   - MUST include `AuthenticationService.js` script in `index.html` (not auto-discovered)
+   - MUST use `BaseAddressAuthorizationMessageHandler` for automatic JWT injection
+   - MUST use HttpClient factory pattern (named client) to ensure handler is properly configured
+   - MUST use `Uri` class for callback URL construction to handle trailing slashes correctly
+
+2. **AWS Cognito App Client Types:**
+   - **Traditional web application**: Server-side apps (generates client secret, NOT compatible with Blazor WASM)
+   - **Single-page application (SPA)**: Browser-based apps like Blazor WASM (public client, NO client secret)
+   - **Mobile app**: Native mobile apps
+   - **Machine-to-machine**: API-to-API communication (uses client credentials flow)
+   - **Critical**: Choose SPA type for Blazor WebAssembly; Traditional type will fail token exchange
+
+3. **Cognito Configuration Immutability:**
+   - **App Client Secret**: Cannot be removed after creation; must create new app client
+   - **Sign-in Attributes**: Cannot be changed after user pool creation; must create new pool
+   - **Domain**: Can be changed but affects all app clients
+   - **Recommendation**: Plan carefully during initial setup; test with throwaway pools first
+
+4. **OAuth Scope Management:**
+   - Scopes requested by client code MUST be enabled in app client configuration
+   - Default scopes vary by app client type
+   - "profile" scope is NOT auto-enabled; must be manually selected
+   - Mismatch causes generic "error signing in" with no specific error details
+
+5. **Redirect URL Matching:**
+   - AWS Cognito requires EXACT match (case-sensitive, trailing slashes matter)
+   - Callback URL: `https://goldshire.tail80a7ec.ts.net/MyShowtime/authentication/login-callback` (NO trailing slash)
+   - Sign-out URL: `https://goldshire.tail80a7ec.ts.net/MyShowtime/` (WITH trailing slash)
+   - Inconsistency is confusing but required (callback is specific endpoint, sign-out is directory/base)
+
+6. **Phone vs Email Authentication:**
+   - Phone authentication requires AWS SNS configuration (additional complexity, cost ~$0.00645 per SMS)
+   - Email authentication works out-of-the-box with Cognito's built-in email service (free tier: 50 emails/day)
+   - SMS verification codes can fail silently if SNS is not properly configured
+   - **Recommendation**: Use email for simple apps; phone only if MFA or region requirements demand it
+
+7. **Debugging OAuth Errors:**
+   - Browser console shows network errors (400, redirect_mismatch, etc.)
+   - Cognito hosted UI errors are often generic ("There was an error signing in")
+   - Check Network tab for actual OAuth/token endpoint responses
+   - Verify app client configuration matches code (client ID, scopes, redirect URIs)
+   - Test with direct Cognito hosted UI URL to isolate client vs server issues
+
+8. **User Management:**
+   - Cannot delete users from AWS Console if only selection checkbox is visible (must use list view)
+   - Cannot set permanent passwords from Console (security restriction against admin access)
+   - Can create users with admin-set temporary passwords that must be changed on first login
+   - Can mark email as verified to skip email verification step
+
+**Next Steps (for future session):**
+
+1. **Create New User Pool** with email-based authentication:
+   - Sign-in attribute: Email (not phone)
+   - MFA: Optional or disabled (simpler for friends/family app)
+   - Email delivery: Use Cognito default (no AWS SES setup needed)
+   - Self-service sign-up: Enabled (friends can register themselves)
+
+2. **Create SPA App Client** for new pool:
+   - App type: Single-page application (PUBLIC client)
+   - OAuth flows: Authorization code grant with PKCE
+   - Scopes: openid, email, profile
+   - Callback URL: `https://goldshire.tail80a7ec.ts.net/MyShowtime/authentication/login-callback`
+   - Sign-out URL: `https://goldshire.tail80a7ec.ts.net/MyShowtime/`
+   - Verify NO client secret is generated
+
+3. **Update Application Code**:
+   - Update User Pool ID in `src/MyShowtime.Client/Program.cs` (line 15)
+   - Update App Client ID in `src/MyShowtime.Client/Program.cs` (line 16)
+   - Update Authority URL in `src/MyShowtime.Api/Program.cs` (line 405, 410)
+   - Update Audience in `src/MyShowtime.Api/Program.cs` (line 412)
+   - Update OIDC Metadata URL in `src/MyShowtime.Client/Program.cs` (line 26)
+
+4. **Test End-to-End Authentication**:
+   - Hard refresh browser (Ctrl+F5) after deployment
+   - Verify redirect to Cognito hosted UI
+   - Create test user account with email/password
+   - Verify successful login and redirect back to app
+   - Verify user auto-provisioned in AppUsers table
+   - Verify JWT token included in API requests
+   - Verify API endpoints filter data by user ID
+
+5. **Delete Old Resources** (optional cleanup):
+   - Old app client: `548ed6mlir2cdkq30aphbn3had`
+   - Old user pool: `us-east-2_VkwlcR2m8`
+   - Note: Keep until new setup is verified working
+
+**Reference Documentation:**
+- Current incomplete implementation: v0.70 (Build 142-144)
+- Version bump to v0.71 (Build 144) marks partially-implemented state
+- See `CognitoSetupGuide.md` for original setup instructions (needs update for SPA client)
+
 ### Blazor Error UI
 
 - **Critical**: Always include the `#blazor-error-ui` CSS styles in `app.css` with `display: none;` to hide the error banner by default
