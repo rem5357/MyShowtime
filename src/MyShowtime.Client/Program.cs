@@ -25,9 +25,10 @@ builder.Services.AddOidcAuthentication(options =>
     // Cognito endpoints (using hosted UI domain)
     options.ProviderOptions.MetadataUrl = "https://cognito-idp.us-east-2.amazonaws.com/us-east-2_VkwlcR2m8/.well-known/openid-configuration";
 
-    // Post-logout redirect
-    options.ProviderOptions.PostLogoutRedirectUri = builder.HostEnvironment.BaseAddress;
-    options.ProviderOptions.RedirectUri = builder.HostEnvironment.BaseAddress + "authentication/login-callback";
+    // Redirect URIs - ensure proper path construction
+    var baseUri = new Uri(builder.HostEnvironment.BaseAddress);
+    options.ProviderOptions.PostLogoutRedirectUri = baseUri.ToString();
+    options.ProviderOptions.RedirectUri = new Uri(baseUri, "authentication/login-callback").ToString();
 });
 
 // Configure HttpClient with automatic JWT bearer token injection
